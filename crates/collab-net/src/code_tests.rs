@@ -216,7 +216,7 @@ fn a_server_older_than_join_codes_says_so_and_the_links_still_work() {
     // the app shows the links.
     let (server, thread) = old_server_with_links();
     let shared =
-        manage::share(&server, None, "0123456789abcdef", "AbCdEfGhIjKlMnOpQrStUv", &[], true, &limits, Duration::from_secs(5)).unwrap().unwrap();
+        manage::share(&server, None, "0123456789abcdef", "AbCdEfGhIjKlMnOpQrStUv", &[], true, "", &limits, Duration::from_secs(5)).unwrap().unwrap();
     assert!(shared.edit.code.is_none() && shared.view.as_ref().is_some_and(|v| v.code.is_none()));
     assert!(shared.edit.link.contains("&file=0123456789abcdef&token=TokenTokenTokenToken01") && shared.edit.id == "link1");
     thread.join().unwrap();

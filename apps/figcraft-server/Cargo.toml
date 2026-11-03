@@ -31,6 +31,8 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 crc32fast = { workspace = true }
 toml = "1"
+# ERP login cache (ThinkPHP `user_token:{token}`). Sync client: this process has no async runtime of its own.
+redis = { version = "0.27", default-features = false, features = ["keep-alive"] }
 env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 # Stopping gracefully on SIGTERM/SIGINT/SIGHUP (systemd, Docker, Ctrl+C) and Ctrl+C/close on Windows.
 ctrlc = { version = "3", features = ["termination"] }

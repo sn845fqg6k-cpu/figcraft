@@ -473,6 +473,9 @@ pub fn specs() -> Vec<CommandSpec> {
                         "the server's address is ws://host:port/ or wss://host/path/, without a key (it is saved with your preferences)",
                     ));
                 }
+                if !crate::live::server_pref_allowed(crate::live::internal_locked(), crate::live::DEFAULT_SERVER, &url) {
+                    return Err(bad(CMD, "sharing only uses the configured server"));
+                }
                 s.prefs.publish_server = url;
                 Ok(json!({"url": s.prefs.publish_server, "default": crate::live::DEFAULT_SERVER}))
             }

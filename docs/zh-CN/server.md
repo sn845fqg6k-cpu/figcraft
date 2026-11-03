@@ -96,3 +96,46 @@ sudo -u figcraft figcraft-server --config /etc/figcraft-server/server.toml key
 在跑着的窗口里 Ctrl+C 会先保存再退出。硬杀掉也不会丢掉已经确认的修改。
 
 备份时先停服务器，再复制整个数据目录（Windows 上是 `D:\figcraft-data`）。里面有全部文件和 **服务器密钥**，按服务器本身一样保管。
+
+## 内部版本：固定服务器，并且要登录
+
+给内部用的桌面程序在编译时锁住分享，运行时再去 ERP 登录。地址和密钥都来自环境变量，不要写进仓库。
+
+编译桌面程序（PowerShell）：
+
+```powershell
+$env:FIGCRAFT_INTERNAL = "1"
+$env:FIGCRAFT_SHARE_SERVER = "ws://127.0.0.1:47900/"
+cargo build -p figcraft --release
+```
+
+`FIGCRAFT_SHARE_SERVER` 不要带密钥。密钥仍在分享窗口里填写，只发给这一个地址。
+
+这样编译出来的程序：
+
+- 不能改「在线分享所用的服务器」
+- 不能在本地网络分享，也不能加入别人的本地分享
+- 不能把文件发到别的服务器
+- 开始分享前要先登录
+
+运行桌面程序前再设置 ERP（密码和签名密钥不要提交）：
+
+```powershell
+$env:FIGCRAFT_ERP_URL = "https://example.invalid"
+$env:FIGCRAFT_ERP_APPID = "1001"
+$env:FIGCRAFT_ERP_SECRET = "<签名密钥>"
+$env:FIGCRAFT_ERP_CLIENT = "EnterpriseCenterWEB"
+```
+
+登录请求和现有 ERP 前端一样：`POST /open/Login/userLogin`，正文是 `{ "data": "<json>" }`，签名是把 `appid`、`data`、`secret`、`timestamp` 排序后做 MD5。刷新用 `POST /open/Login/refreshToken`。
+
+服务器要核对这个登录时，再设置 Redis。不设的话，服务器行为和原来一样，不检查登录。ThinkPHP 把用户存在 `user_token:{accessToken}`，值是 PHP `serialize` 的数组。分享链接上的名字用这里的 `nickname`，没有再用 `username`，不采用客户端自己填的名字。
+
+```powershell
+$env:FIGCRAFT_REDIS_URL = "redis://:密码@127.0.0.1:6379/0"
+$env:FIGCRAFT_ERP_APPID = "1001"
+```
+
+`FIGCRAFT_ERP_APPID` 要和登录时写入的 `from_appid` 一致。对不上，或者 Redis 里没有这个 token，发布和新建分享链接都会被拒绝。已经发出去的链接，token 过期之后仍然能用。看的人不用登录。
+
+Docker 里没有 shell。Redis 用另一个容器，把上面两个变量传给 `figcraft-server` 进程即可。镜像本身不用为这个重新编译。

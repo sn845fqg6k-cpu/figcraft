@@ -109,6 +109,7 @@ pub fn share(
     owner: &str,
     revoke: &[String],
     create: bool,
+    auth: &str,
     limits: &NetLimits,
     timeout: Duration,
 ) -> Result<Option<Shared>, String> {
@@ -116,10 +117,10 @@ pub fn share(
         Some(key) => request(server, key, requests, limits, timeout),
         None => hosting(server, file, owner, requests, limits, timeout).map(|(_, replies)| replies),
     };
-    let Some(mut links) = made_links(ask(link_requests(file, revoke, create))?, create)? else { return Ok(None) };
+    let Some(mut links) = made_links(ask(link_requests(file, revoke, create, auth))?, create)? else { return Ok(None) };
     // The comment link on a connection of its own: a server from before comment links can't read
     // the request and closes it (the file is shared without one then).
-    let comment = ask(comment_request(file)).map_err(|e| log::info!("live session: no comment link from {}: {e}", server.display()));
+    let comment = ask(comment_request(file, auth)).map_err(|e| log::info!("live session: no comment link from {}: {e}", server.display()));
     links.comment = made_comment(comment.unwrap_or_default());
     // Their codes, on a connection of its own: a server from before join codes can't read the
     // request and closes it (the links are shared without codes then).

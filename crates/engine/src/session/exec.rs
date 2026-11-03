@@ -4,12 +4,14 @@ use super::{
 };
 
 /// Whether a command, or a batch wrapping one, imports a file passed as Base64 `data`.
-fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
+fn command_skips_journal(id: &str, params: &Value) -> bool {
     match id {
+        // The token must not sit in the session log.
+        "auth.signIn" | "auth.signOut" => true,
         "file.import" | "image.replace" => params::get(params, "data").is_some(),
         "command.batch" => params.get("commands").and_then(Value::as_array).is_some_and(|commands| {
             commands.iter().any(|c| {
-                c.get("command").and_then(Value::as_str).zip(c.get("params")).is_some_and(|(id, params)| command_carries_import_bytes(id, params))
+                c.get("command").and_then(Value::as_str).zip(c.get("params")).is_some_and(|(id, params)| command_skips_journal(id, params))
             })
         }),
         _ => false,
@@ -122,7 +124,7 @@ impl Session {
                 }
                 // Imported bytes already live in the document: a Base64 copy in the log would stay
                 // for the whole session.
-                if !command_carries_import_bytes(id, params) {
+                if !command_skips_journal(id, params) {
                     self.journal.push((id.to_string(), params.clone()));
                     if self.journal.len() > 5000 {
                         self.journal.drain(..1000);

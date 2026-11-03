@@ -94,7 +94,7 @@ impl Guest {
             // which stopping takes away again.
             let shared = job.share.then(|| {
                 let owner = published.owner.as_deref().unwrap_or_default();
-                let made = manage::share(&job.server, job.key.as_deref(), &published.file, owner, &[], true, &cfg.limits, cfg.connect_timeout);
+                let made = manage::share(&job.server, job.key.as_deref(), &published.file, owner, &[], true, &job.auth, &cfg.limits, cfg.connect_timeout);
                 made.and_then(|s| s.ok_or_else(|| "the server didn't make the links".to_string()))
             });
             if let Some(h) = hosting {
@@ -170,10 +170,11 @@ pub(crate) fn upload_file(
     key: Option<&str>,
     name: &str,
     doc: &Document,
+    auth: &str,
     limits: &NetLimits,
     timeout: Duration,
 ) -> Result<(Invite, Published, Option<HostInfo>), String> {
-    let publish = vec![requests::upload(name, doc)?];
+    let publish = vec![requests::upload(name, doc, auth)?];
     let (replies, hosting) = match key {
         Some(key) => (manage::request(server, key, publish, limits, timeout)?, None),
         None => {
@@ -187,7 +188,7 @@ pub(crate) fn upload_file(
 
 /// Upload the document; the join settings for the new file, its links and the server's hosting.
 fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published, Option<HostInfo>), String> {
-    let (edit, published, hosting) = upload_file(&job.server, job.key.as_deref(), &job.name, &job.doc, &cfg.limits, cfg.connect_timeout)?;
+    let (edit, published, hosting) = upload_file(&job.server, job.key.as_deref(), &job.name, &job.doc, &job.auth, &cfg.limits, cfg.connect_timeout)?;
     cfg.invite = edit;
     Ok((cfg, published, hosting))
 }

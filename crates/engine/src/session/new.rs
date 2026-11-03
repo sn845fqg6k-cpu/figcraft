@@ -33,6 +33,9 @@ impl Session {
             pending_events: Vec::new(),
             agent: None,
             agent_presence: None,
+            auth_token: String::new(),
+            auth_name: String::new(),
+            auth_refresh: String::new(),
         }
     }
 

@@ -50,7 +50,7 @@ fn server() -> Endpoint {
 fn job(key: Option<&str>, share: bool) -> Publish {
     let mut doc = Document::new("Poster");
     doc.repair();
-    Publish { server: server(), key: key.map(String::from), name: "Poster".into(), doc: Arc::new(doc), share }
+    Publish { server: server(), key: key.map(String::from), name: "Poster".into(), doc: Arc::new(doc), share, auth: String::new() }
 }
 
 fn config() -> GuestConfig {
@@ -333,13 +333,13 @@ fn background_requests_ask_about_hosting_and_sharing() {
     );
     // Stopping a share revokes its links, with the key when the address carries it.
     let stop =
-        NetRequest::Share { server: format!("{SERVER}?key=k3y"), file: FILE.into(), owner: String::new(), revoke: vec!["e1".into()], create: false };
+        NetRequest::Share { server: format!("{SERVER}?key=k3y"), file: FILE.into(), owner: String::new(), revoke: vec!["e1".into()], create: false, auth: String::new() };
     let (reply, sent) = background(stop, &[admin(AdminReply::Ready), admin(AdminReply::Done)]);
     assert!(matches!(reply, NetReply::Share(Ok(None))));
     assert!(matches!(sent.as_slice(), [ClientMsg::Manage(m), ClientMsg::Admin(Admin::Revoke { link, .. })] if m.key == "k3y" && link == "e1"));
     // Addresses that aren't one answer at once; what the browser doesn't send stays the engine's.
     let bad_hosting = NetRequest::Hosting { server: "nope".into(), file: String::new(), owner: String::new(), req: None };
-    let bad_share = NetRequest::Share { server: "http://x".into(), file: FILE.into(), owner: String::new(), revoke: Vec::new(), create: true };
+    let bad_share = NetRequest::Share { server: "http://x".into(), file: FILE.into(), owner: String::new(), revoke: Vec::new(), create: true, auth: String::new() };
     for bad in [bad_hosting, bad_share] {
         let Some(Next::Done(events, None)) = exchange::background(1, bad) else { panic!("not answered at once") };
         assert!(matches!(events.as_slice(), [Event::Net { reply, .. }] if matches!(**reply, NetReply::Hosting(Err(_)) | NetReply::Share(Err(_)))));

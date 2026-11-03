@@ -10,6 +10,7 @@
 
 pub mod abuse;
 pub mod cli;
+mod identity;
 pub mod codes;
 pub mod config;
 pub mod directory;

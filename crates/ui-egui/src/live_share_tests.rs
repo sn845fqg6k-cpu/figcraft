@@ -92,7 +92,7 @@ impl LiveLink for Link {
         s.published.push(opts);
         Ok(())
     }
-    fn share(&mut self, _: &str, _: &str, _: &str, revoke: &[String], create: bool) -> Result<Option<SharedLinks>, String> {
+    fn share(&mut self, _: &str, _: &str, _: &str, revoke: &[String], create: bool, _: &str) -> Result<Option<SharedLinks>, String> {
         let mut s = self.0.lock().unwrap();
         s.revoked.extend(revoke.iter().cloned());
         s.shares += usize::from(create);

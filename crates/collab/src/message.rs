@@ -335,6 +335,21 @@ pub enum CatchUp {
     Packed(Vec<u8>),
 }
 
+/// Marker between a file name or a link label and the ERP access token a private build sends
+/// with it. The server removes the marker and the token before anything is stored. An empty token
+/// is not marked, so a message without a login is unchanged on the wire.
+pub const AUTH_MARK: &str = "\u{1e}auth:";
+
+/// `text`, with `token` after [`AUTH_MARK`] when the token is not empty.
+pub fn seal_auth(text: &str, token: &str) -> String {
+    if token.is_empty() { text.to_string() } else { format!("{text}{AUTH_MARK}{token}") }
+}
+
+/// The text and the ERP token [`seal_auth`] added. No marker: the token is empty.
+pub fn unseal_auth(text: &str) -> (&str, &str) {
+    text.split_once(AUTH_MARK).unwrap_or((text, ""))
+}
+
 /// Opens a connection that manages a server's files (instead of [`Hello`]): the server's admin
 /// key. Answered with [`AdminReply::Ready`] or `Refused`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1059,5 +1074,14 @@ mod tests {
         // cycles and the real year restored, so it keeps the old hand-rolled output instead of
         // falling back to the epoch.
         assert_eq!(utc_date(u64::MAX), "584554051223-11-09 07:00 UTC");
+    }
+
+    #[test]
+    fn an_empty_login_leaves_the_text_unchanged() {
+        assert_eq!(seal_auth("Shared (edit)", ""), "Shared (edit)");
+        assert_eq!(unseal_auth("Shared (edit)"), ("Shared (edit)", ""));
+        let sealed = seal_auth("Shared (edit)", "QC1");
+        assert_eq!(unseal_auth(&sealed), ("Shared (edit)", "QC1"));
+        assert!(sealed.contains(AUTH_MARK));
     }
 }
