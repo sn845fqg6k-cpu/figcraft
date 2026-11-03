@@ -1,5 +1,7 @@
 # FigCraft MCP server
 
+[中文](zh-CN/mcp.md)
+
 FigCraft ships a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can
 design with it: create and edit layers, run any menu command, inspect the result as JSON and look at
 it as a PNG. It speaks newline-delimited JSON-RPC 2.0 over stdio (MCP protocol `2025-06-18`;

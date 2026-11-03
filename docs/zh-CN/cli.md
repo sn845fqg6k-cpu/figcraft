@@ -107,7 +107,7 @@ fig mcp
 fig mcp --attach 47800
 ```
 
-`--attach` 接到已经开着的桌面版（启动时加 `figcraft --control 47800`）。不带 `--attach` 时自己开一个无窗口会话。详见 [mcp.md](../mcp.md)。
+`--attach` 接到已经开着的桌面版（启动时加 `figcraft --control 47800`）。不带 `--attach` 时自己开一个无窗口会话。详见 [MCP 中文说明](mcp.md)。
 
 ## Windows
 

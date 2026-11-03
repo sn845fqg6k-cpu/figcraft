@@ -11,6 +11,8 @@
 | [我们的仓库](our-fork.md) | 推送到自己的 GitHub，以及把上游更新合并进来 |
 | [命令行](cli.md) | `fig` 和 `figcraft-cli`：查看、导出、转换、跑脚本、MCP |
 | [架构](architecture.md) | 分层、文档模型、命令、渲染和文件 |
+| [MCP](mcp.md) | 让 AI 代理读写 FigCraft 文件：工具、命令和例子 |
+| [自建分享服务器](server.md) | 不用 collab.craftapps.dev，自己跑 figcraft-server |
 
 ## 英文文档对照
 
@@ -19,10 +21,10 @@
 | [our-fork.md](../our-fork.md) | 我们仓库的英文操作说明（中文见 [our-fork.md](our-fork.md)） |
 | [architecture.md](../architecture.md) | 架构原文（中文节选见 [architecture.md](architecture.md)） |
 | [cli.md](../cli.md) | 命令行原文，含每个子命令的完整旗标 |
-| [mcp.md](../mcp.md) | 给 AI 代理的 MCP 服务 |
+| [mcp.md](../mcp.md) | MCP 英文原文（中文见 [mcp.md](mcp.md)） |
 | [control-protocol.md](../control-protocol.md) | 桌面版 JSON 控制通道 |
 | [plugins.md](../plugins.md) | WebAssembly 插件 |
-| [server.md](../server.md) | 自建协作服务器 |
+| [server.md](../server.md) | 自建协作服务器原文（中文操作见 [server.md](server.md)） |
 | [collab-protocol.md](../collab-protocol.md) | 实时会话协议 |
 | [translating.md](../translating.md) | 怎么加一种界面语言 |
 | [releasing.md](../releasing.md) | 怎么打安装包和发布 |
