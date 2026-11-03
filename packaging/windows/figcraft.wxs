@@ -52,7 +52,7 @@
     <Property Id="FigcraftVersion" Value="$(var.DisplayVersion)" />
 
     <!-- Finish page: say where to find the app, and offer to start it (ticked by default). -->
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="FigCraft $(var.DisplayVersion) is installed. You can start it any time from the Start menu." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="FigCraft $(var.DisplayVersion) is installed. fig and figcraft-cli are on PATH; open a new terminal to use them. You can start FigCraft any time from the Start menu." />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch FigCraft" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <Property Id="WixShellExecTarget" Value="[#FigcraftExe]" />
@@ -107,6 +107,21 @@
 <?if $(var.HasCli) = 1 ?>
       <Component Id="FigcraftCli">
         <File Id="FigcraftCliExe" Source="$(var.BinDir)\figcraft-cli.exe" KeyPath="yes" />
+      </Component>
+      <!-- Short name for the same CLI. fig.cmd sits beside figcraft-cli.exe, so PATH finds `fig`. -->
+      <Component Id="FigcraftCliShim" Guid="B7E4C1A2-5D83-4F09-9A16-2C8E6F04D3B1">
+        <File Id="FigCmd" Source="$(sys.SOURCEFILEDIR)fig.cmd" KeyPath="yes" />
+      </Component>
+      <!-- Append the install folder to PATH so figcraft-cli runs from any new terminal.
+           A per-user install writes the user variable; Install for everyone writes the system
+           variable. Uninstall removes that entry. -->
+      <Component Id="FigcraftCliPathUser" Guid="6C4E8A21-9B3D-4F17-A8E2-1D5C7B90E4A6" Condition="NOT (ALLUSERS = 1)">
+        <Environment Id="FigcraftCliUserPath" Name="PATH" Value="[INSTALLFOLDER]" Action="set" Part="last" System="no" />
+        <RegistryValue Root="HKMU" Key="Software\FigCraft" Name="CliPathUser" Value="[INSTALLFOLDER]" Type="string" KeyPath="yes" />
+      </Component>
+      <Component Id="FigcraftCliPathMachine" Guid="2F91C6D4-8E55-4A0B-9C31-7B6E2D84F1A0" Condition="ALLUSERS = 1">
+        <Environment Id="FigcraftCliMachinePath" Name="PATH" Value="[INSTALLFOLDER]" Action="set" Part="last" System="yes" />
+        <RegistryValue Root="HKMU" Key="Software\FigCraft" Name="CliPathMachine" Value="[INSTALLFOLDER]" Type="string" KeyPath="yes" />
       </Component>
 <?endif?>
     </ComponentGroup>

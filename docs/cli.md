@@ -2,7 +2,7 @@
 
 FigCraft without a window: inspect, export, convert and render documents, run command scripts, list
 commands, serve MCP, publish plugins and code connect mappings, and measure performance. Build it with
-`cargo build --release -p figcraft-cli` (binary `target/release/figcraft-cli`).
+`cargo build --release -p figcraft-cli` (binary `target/release/figcraft-cli`). The Windows installer and portable zip also ship `fig.cmd` beside it, so `fig` runs the same CLI.
 
 The CLI follows [RFC-0012](https://github.com/storytold/craft-contrib/blob/main/rfcs/0012-cli-conventions.md),
 the command-line conventions the Craft apps share, in how it parses its arguments (with clap). The

@@ -152,7 +152,7 @@ hdiutil attach -nobrowse -readonly dist/release/figcraft-*-macos-aarch64.dmg   #
 redistributable), checks each exe's PE machine and subsystem (app GUI, CLI console), signs the
 exes, builds the MSI with WiX v5 (`figcraft.wxs`: per-machine, Start Menu shortcut, owner of
 `.figcraft`, "Open with" for SVG/PNG/JPEG, App Paths, setup wizard with art drawn from the app
-icon), validates ICE50, signs the MSI and zips a portable build. `sign.ps1` uses a `.pfx`
+icon), appends the install folder to PATH (the user variable for a per-user install, the system variable when installed for everyone, removed on uninstall) so `fig` and `figcraft-cli` run from a new terminal (`fig.cmd` forwards to `figcraft-cli.exe`), validates ICE50, signs the MSI and zips a portable build. `sign.ps1` uses a `.pfx`
 (`WINDOWS_CERTIFICATE*`) or Azure Trusted Signing (`AZURE_*`), else warns and leaves files
 unsigned. `apps/figcraft/build.rs` embeds the icon and version info with `winresource`.
 `.github/workflows/windows-arm64.yml` installs the arm64 MSI on real ARM64 hardware nightly.

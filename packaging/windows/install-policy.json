@@ -120,6 +120,18 @@
       "Software\\FigCraft",
       "InstallDir",
       "[INSTALLFOLDER]"
+    ],
+    [
+      "-1",
+      "Software\\FigCraft",
+      "CliPathUser",
+      "[INSTALLFOLDER]"
+    ],
+    [
+      "-1",
+      "Software\\FigCraft",
+      "CliPathMachine",
+      "[INSTALLFOLDER]"
     ]
   ],
   "mode": "dualScope"

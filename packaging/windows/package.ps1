@@ -97,6 +97,7 @@ New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'NOTICE') -Destination $Stage
 $Exes = $Bins | ForEach-Object { "$_.exe" }
 foreach ($exe in $Exes) { Copy-Item (Join-Path $Bin $exe) $Stage }
+if ($HasCli) { Copy-Item (Join-Path $PSScriptRoot 'fig.cmd') $Stage }
 
 $SignFiles = @($Exes | ForEach-Object { Join-Path $Stage $_ })
 & (Join-Path $PSScriptRoot 'sign.ps1') @SignFiles
@@ -177,6 +178,7 @@ $Portable = Join-Path $TargetDir "windows-package\figcraft-$Version-windows-$Arc
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
+if ($HasCli) { Copy-Item (Join-Path $Stage 'fig.cmd') $Portable }
 foreach ($f in 'README.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE') {
   $p = Join-Path $Root $f
   if (Test-Path $p) { Copy-Item $p $Portable }
@@ -204,6 +206,7 @@ $Smoke = if ($HasCli) { 'figcraft-cli.exe' } else { 'figcraft.exe' }
 if ($Arch -ne 'arm64' -or $HostArch -eq 'arm64') {
   # figcraft.exe is a GUI-subsystem exe: pipe it so PowerShell waits and shows its --version output.
   Invoke-Native "$Smoke --version" { & (Join-Path $Stage $Smoke) --version | Out-Host }
+  if ($HasCli) { Invoke-Native 'fig.cmd --version' { & (Join-Path $Stage 'fig.cmd') --version | Out-Host } }
 } else {
   Write-Output "skipping $Smoke --version: an $Arch build doesn't run on this $HostArch machine"
 }
