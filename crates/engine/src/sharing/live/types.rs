@@ -9,10 +9,23 @@ use super::{
 /// A build can ship another one, or none: set `FIGCRAFT_DEFAULT_SERVER` when compiling to a
 /// server's address (`wss://host/`), or to nothing (`FIGCRAFT_DEFAULT_SERVER=`) for a build whose
 /// online sharing stays off until the user enters a server in Preferences.
-pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_DEFAULT_SERVER") {
-    Some(server) => server,
-    None => "wss://collab.craftapps.dev/",
+pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_INTERNAL") {
+    // A private build shares only through the server named at compile time.
+    Some(_) => match option_env!("FIGCRAFT_SHARE_SERVER") {
+        Some(server) => server,
+        None => "",
+    },
+    None => match option_env!("FIGCRAFT_DEFAULT_SERVER") {
+        Some(server) => server,
+        None => "wss://collab.craftapps.dev/",
+    },
 };
+
+/// This binary was compiled for the private deployment (`FIGCRAFT_INTERNAL` set): online sharing
+/// uses [`DEFAULT_SERVER`] only, and hosting on the local network is refused.
+pub fn internal_locked() -> bool {
+    option_env!("FIGCRAFT_INTERNAL").is_some()
+}
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
 pub const MAX_SELECTION: usize = 10_000;
@@ -306,7 +319,7 @@ pub enum NetRequest {
     /// Change who else gets into `file` on the server at `server` (its address, with `?key=…`, or
     /// the file's `owner` token): revoke the links with these ids, then, to `create`, make a new
     /// edit link and view link with their join codes ([`LiveLink::share`]).
-    Share { server: String, file: String, owner: String, revoke: Vec<String>, create: bool },
+    Share { server: String, file: String, owner: String, revoke: Vec<String>, create: bool, auth: String },
     /// Ask the server at `server` about its hosting and, with a file's owner token, manage that
     /// file ([`LiveLink::hosting`]).
     Hosting { server: String, file: String, owner: String, req: Option<Admin> },
@@ -409,6 +422,8 @@ pub struct PublishOptions {
     /// Share the file once it is there: links and join codes for others ([`Event::Shared`];
     /// `collab.share`).
     pub share: bool,
+    /// ERP access token sent with the upload and the links it makes. Empty when nobody is signed in.
+    pub auth: String,
 }
 
 /// The networking behind live sessions, installed by the app ([`Lives::install`]). It carries
@@ -470,13 +485,23 @@ pub trait LiveLink: Send {
         Err(NO_HOSTING.into())
     }
     /// See [`NetRequest::Share`]; waits for the server. Errors never echo the key or the token.
-    fn share(&mut self, _server: &str, _file: &str, _owner: &str, _revoke: &[String], _create: bool) -> std::result::Result<Option<Shared>, String> {
+    fn share(
+        &mut self,
+        _server: &str,
+        _file: &str,
+        _owner: &str,
+        _revoke: &[String],
+        _create: bool,
+        _auth: &str,
+    ) -> std::result::Result<Option<Shared>, String> {
         Err(NO_HOSTING.into())
     }
     /// Send `req` and wait for the answer (through the methods above).
     fn request(&mut self, req: NetRequest) -> NetReply {
         match req {
-            NetRequest::Share { server, file, owner, revoke, create } => NetReply::Share(self.share(&server, &file, &owner, &revoke, create)),
+            NetRequest::Share { server, file, owner, revoke, create, auth } => {
+                NetReply::Share(self.share(&server, &file, &owner, &revoke, create, &auth))
+            }
             NetRequest::Plugins { server, req } => NetReply::Plugins(self.plugins(&server, req)),
             NetRequest::Library { link, req } => NetReply::Library(self.library(&link, req)),
             NetRequest::Upload(o) => NetReply::Upload(self.upload(o)),

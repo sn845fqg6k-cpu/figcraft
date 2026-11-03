@@ -117,8 +117,8 @@ fn not_published(e: &str) -> Next {
 /// Publish `job` (see the module docs): [`Event::Hosting`] (published without the key),
 /// [`Event::Published`] and, to share, [`Event::Shared`], then the join.
 pub(crate) fn publish(job: Publish) -> Next {
-    let Publish { server, key, name, doc, share } = job;
-    let upload = match requests::upload(&name, &doc) {
+    let Publish { server, key, name, doc, share, auth } = job;
+    let upload = match requests::upload(&name, &doc, &auth) {
         Ok(r) => r,
         Err(e) => return not_published(&e),
     };
@@ -146,7 +146,7 @@ pub(crate) fn publish(job: Publish) -> Next {
                 events.push(Event::Shared(made.and_then(|s| s.ok_or_else(|| "the server didn't make the links".to_string()))));
                 Next::Done(events, Some(edit))
             });
-            share_links(Sharing { server, key, file: published.file, owner, revoke: Vec::new(), create: true }, then)
+            share_links(Sharing { server, key, file: published.file, owner, revoke: Vec::new(), create: true, auth }, then)
         }),
     )
 }
@@ -159,6 +159,7 @@ struct Sharing {
     owner: String,
     revoke: Vec<String>,
     create: bool,
+    auth: String,
 }
 
 /// What [`share_links`] hands the links to.
@@ -167,7 +168,7 @@ type LinksThen = Box<dyn FnOnce(Result<Option<Shared>, String>) -> Next>;
 /// Revoke the links `s.revoke` names, then (to create) make new ones, then a comment link and their
 /// codes, each on a connection of its own; `then` gets the links.
 fn share_links(s: Sharing, then: LinksThen) -> Next {
-    let ex = Exchange::new(s.server.clone(), s.key.as_deref(), &s.file, &s.owner, requests::link_requests(&s.file, &s.revoke, s.create));
+    let ex = Exchange::new(s.server.clone(), s.key.as_deref(), &s.file, &s.owner, requests::link_requests(&s.file, &s.revoke, s.create, &s.auth));
     Next::Ask(
         Box::new(ex),
         Box::new(move |answers| match answers.and_then(|a| requests::made_links(a.replies, s.create)) {
@@ -179,7 +180,7 @@ fn share_links(s: Sharing, then: LinksThen) -> Next {
 
 /// Ask for a comment link beside `links`, then for their codes.
 fn comment_link(s: Sharing, mut links: requests::Links, then: LinksThen) -> Next {
-    let ex = Exchange::new(s.server.clone(), s.key.as_deref(), &s.file, &s.owner, requests::comment_request(&s.file));
+    let ex = Exchange::new(s.server.clone(), s.key.as_deref(), &s.file, &s.owner, requests::comment_request(&s.file, &s.auth));
     Next::Ask(
         Box::new(ex),
         Box::new(move |made| {
@@ -223,12 +224,12 @@ pub(crate) fn background(job: u64, req: NetRequest) -> Option<Next> {
                 }),
             ),
         },
-        NetRequest::Share { server, file, owner, revoke, create } => match Endpoint::parse(&server) {
+        NetRequest::Share { server, file, owner, revoke, create, auth } => match Endpoint::parse(&server) {
             Err(e) => answer(NetReply::Share(Err(e))),
             // As the server's operator when the address carries its key, else as the file's owner.
             Ok((server, query)) => {
                 let key = requests::server_key(None, query);
-                share_links(Sharing { server, key, file, owner, revoke, create }, Box::new(move |r| answer(NetReply::Share(r))))
+                share_links(Sharing { server, key, file, owner, revoke, create, auth }, Box::new(move |r| answer(NetReply::Share(r))))
             }
         },
         NetRequest::Plugins { .. } | NetRequest::Library { .. } | NetRequest::Upload(_) => return None,

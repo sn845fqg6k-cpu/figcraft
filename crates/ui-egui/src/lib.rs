@@ -20,6 +20,8 @@ pub mod canvas;
 pub mod cjk;
 pub mod control;
 pub mod dialogs;
+#[cfg(not(target_arch = "wasm32"))]
+mod erp;
 pub mod home;
 pub mod i18n;
 pub mod icons;

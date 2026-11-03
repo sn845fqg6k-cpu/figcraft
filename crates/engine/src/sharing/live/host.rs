@@ -1,3 +1,4 @@
+use super::policy::share_target;
 use super::types::{Bind, HostOptions, NetReply, NetRequest, ONLINE_OFF, PublishOptions, Role, SessionId, Share, Shared, SharedLink, Status, Via};
 use super::{
     Access, Admin, AdminReply, ClientMsg, EngineError, HostInfo, IpAddr, Live, Result, Session, Value, bad, code, display_name, get, json,
@@ -37,7 +38,9 @@ pub(super) fn unavailable(cmd: &str) -> EngineError {
 }
 
 pub(super) fn host(s: &mut Session, p: &Value) -> Result<Value> {
-    start_host(s, "collab.host", p, Bind::Local, false)?;
+    const CMD: &str = "collab.host";
+    share_target(super::internal_locked(), super::DEFAULT_SERVER, true, "", &s.auth_token).map_err(|r| bad(CMD, r))?;
+    start_host(s, CMD, p, Bind::Local, false)?;
     Ok(s.live_summary())
 }
 
@@ -64,8 +67,18 @@ fn start_host(s: &mut Session, cmd: &str, p: &Value, bind: Bind, short: bool) ->
 pub(super) fn publish(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.publish";
     let server = req_string(CMD, p, "server")?;
+    let server = forced_server(CMD, s, &server)?;
     start_publish(s, CMD, &server, p, false)?;
     Ok(s.live_summary())
+}
+
+/// The server a private build may use. An ordinary build keeps `server`.
+fn forced_server(cmd: &str, s: &Session, server: &str) -> Result<String> {
+    match share_target(super::internal_locked(), super::DEFAULT_SERVER, false, server, &s.auth_token) {
+        Ok(url) if super::internal_locked() => Ok(url.to_string()),
+        Ok(_) => Ok(server.trim().to_string()),
+        Err(reason) => Err(bad(cmd, reason)),
+    }
 }
 
 /// Start publishing the open file to `server` for command `cmd` (`share`: with links and join
@@ -75,7 +88,15 @@ fn start_publish(s: &mut Session, cmd: &str, server: &str, p: &Value, share: boo
     let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
     let name = string(p, "name").map(|n| n.trim().chars().filter(|c| !c.is_control()).take(256).collect::<String>()).filter(|n| !n.is_empty());
     let me = display_name(&s.prefs);
-    let opts = PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me, doc, share };
+    let opts = PublishOptions {
+        server: server.trim().to_string(),
+        key,
+        name: name.unwrap_or_else(|| doc.name.clone()),
+        me,
+        doc,
+        share,
+        auth: s.auth_token.clone(),
+    };
     let (id, ()) = s.live.start(cmd, |l, id| l.publish(id, opts).map_err(|e| bad(cmd, e)))?;
     // This tab becomes the server file's synced document once it is there.
     s.live.open(Live { id, status: Status::Connecting, doc_uid: Some(uid), tab: Some(uid), server: server.trim().to_string(), ..Live::default() });
@@ -131,10 +152,15 @@ pub(super) fn share(s: &mut Session, p: &Value) -> Result<Value> {
     let mut server = String::new();
     let id = match via {
         Via::Local if access != Access::Edit => return Err(bad(CMD, LOCAL_EDITS)),
-        Via::Local => start_host(s, CMD, p, Bind::Lan, true)?,
+        Via::Local => {
+            share_target(super::internal_locked(), super::DEFAULT_SERVER, true, "", &s.auth_token).map_err(|r| bad(CMD, r))?;
+            start_host(s, CMD, p, Bind::Lan, true)?
+        }
         Via::Online => {
             server = string(p, "server").unwrap_or_else(|| s.prefs.publish_server.clone()).trim().to_string();
-            if server.is_empty() {
+            if super::internal_locked() {
+                server = forced_server(CMD, s, &server)?;
+            } else if server.is_empty() {
                 return Err(EngineError::Disabled(CMD.into(), ONLINE_OFF.into()));
             }
             start_publish(s, CMD, &server, p, true)?
@@ -178,7 +204,7 @@ pub(super) fn share_request(s: &Session, revoke: Vec<String>, create: bool) -> O
     }
     // The token this session got when it published the file, else the recorded one.
     let owner = published.owner.clone().or_else(|| s.online_owner(&share.server, &published.file)).unwrap_or_default();
-    Some(NetRequest::Share { server: share.server.clone(), file: published.file.clone(), owner, revoke, create })
+    Some(NetRequest::Share { server: share.server.clone(), file: published.file.clone(), owner, revoke, create, auth: s.auth_token.clone() })
 }
 
 /// Send `req` ([`NetRequest::Share`]): the new links, if it made any.
@@ -228,7 +254,11 @@ pub(super) fn manage_file(s: &mut Session, p: &Value) -> Result<Value> {
         "links" => Admin::Links { file: file.clone() },
         "createLink" => {
             let access = access_param(CMD, p)?.unwrap_or(Access::View);
-            Admin::CreateLink { file: file.clone(), access, label: string(p, "label").unwrap_or_default() }
+            Admin::CreateLink {
+                file: file.clone(),
+                access,
+                label: figcraft_collab::message::seal_auth(&string(p, "label").unwrap_or_default(), &s.auth_token),
+            }
         }
         "revoke" => Admin::Revoke { file: file.clone(), link: req_string(CMD, p, "link")?.trim().to_string() },
         "rename" => {

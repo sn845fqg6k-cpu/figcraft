@@ -119,7 +119,7 @@ impl LiveLink for Link {
         };
         Ok((HostInfo::default(), Some(reply)))
     }
-    fn share(&mut self, _: &str, file: &str, owner: &str, revoke: &[String], create: bool) -> Result<Option<SharedLinks>, String> {
+    fn share(&mut self, _: &str, file: &str, owner: &str, revoke: &[String], create: bool, _: &str) -> Result<Option<SharedLinks>, String> {
         let mut s = self.0.lock().unwrap();
         s.shares.push((file.into(), owner.into(), revoke.to_vec(), create));
         let n = s.shares.iter().filter(|a| a.3).count();

@@ -10,7 +10,9 @@ fn join(s: &mut Session, p: &Value) -> Result<Value> {
         Some(code) => code,
         None => req_string(CMD, p, "link").map_err(|_| bad(CMD, "give the join `code` you were told, or the invite `link`"))?,
     };
-    let link = join_target(&s.prefs.publish_server, &typed).map_err(|e| bad(CMD, e))?;
+    let server = if super::internal_locked() { super::DEFAULT_SERVER } else { s.prefs.publish_server.as_str() };
+    let link = join_target(server, &typed).map_err(|e| bad(CMD, e))?;
+    super::join_allowed(super::internal_locked(), super::DEFAULT_SERVER, &link).map_err(|e| bad(CMD, e))?;
     let id = start_join(s, CMD, &link, None, None, None)?;
     Ok(s.live.get(id).map_or(Value::Null, |l| s.summary(l)))
 }
@@ -162,6 +164,32 @@ fn spotlight(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"spotlighting": s.live().spotlighting}))
 }
 
+fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "auth.signIn";
+    let token = req_string(CMD, p, "token")?;
+    let token = token.trim();
+    if token.is_empty() || token.len() > 512 || token.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(bad(CMD, "`token` must be the login token"));
+    }
+    let name: String = string(p, "name").unwrap_or_default().trim().chars().filter(|c| !c.is_control()).take(80).collect();
+    let refresh = string(p, "refresh").unwrap_or_default();
+    let refresh = refresh.trim();
+    if refresh.len() > 512 || refresh.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(bad(CMD, "`refresh` must be the refresh token"));
+    }
+    s.auth_token = token.to_string();
+    s.auth_name = if name.is_empty() { "user".into() } else { name };
+    s.auth_refresh = refresh.to_string();
+    Ok(json!({"signedIn": true, "name": s.auth_name}))
+}
+
+fn sign_out(s: &mut Session, _: &Value) -> Result<Value> {
+    s.auth_token.clear();
+    s.auth_name.clear();
+    s.auth_refresh.clear();
+    Ok(json!({"signedIn": false}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
@@ -255,6 +283,20 @@ pub fn specs() -> Vec<CommandSpec> {
             "{text? (shown next to your cursor for everyone, at most 100 characters; empty closes it; omit to open the chat box in the app)} → {chat} (or {open}); others see it fade after 5 s without changes",
             false,
             cursor_chat
+        ),
+        spec!(
+            "auth.signIn",
+            "Sign in",
+            "{token (the ERP access token), name? (shown in this app; the server reads the name itself), refresh? (the ERP refresh token)} → {signedIn, name}. The token stays in this process and is not written to the command log",
+            false,
+            sign_in
+        ),
+        spec!(
+            "auth.signOut",
+            "Sign out",
+            "{} → {signedIn: false}",
+            false,
+            sign_out
         ),
         spec!(
             "collab.spotlight",

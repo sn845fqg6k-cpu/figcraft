@@ -219,7 +219,7 @@ impl LiveLink for NetLink {
         let key = requests::server_key(o.key, query);
         // Until the upload is done the invite names only the server.
         let cfg = GuestConfig::new(Invite { server: server.clone(), file: String::new(), token: String::new() }, o.me);
-        let job = Publish { server, key, name: o.name, doc: o.doc, share: o.share };
+        let job = Publish { server, key, name: o.name, doc: o.doc, share: o.share, auth: o.auth };
         let (id, sock) = socket();
         let inbox = self.sessions.inbox();
         run(id, Driver::publish(sock, cfg, job, inbox.clone(), Instant::now()));

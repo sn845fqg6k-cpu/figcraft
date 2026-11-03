@@ -22,6 +22,8 @@ pub struct Publish {
     /// Share the file once it is there: links and join codes for others
     /// ([`Event::Shared`](figcraft_engine::live::Event::Shared)).
     pub share: bool,
+    /// ERP access token. Empty when nobody is signed in.
+    pub auth: String,
 }
 
 /// How an error starts when the server said no (then its reason), rather than not answering.
@@ -43,9 +45,9 @@ pub(crate) fn hosting_error(server: &Endpoint, e: String) -> String {
 }
 
 /// The request that keeps `doc` on a server as a new file named `name`.
-pub(crate) fn upload(name: &str, doc: &Document) -> Result<Admin, String> {
+pub(crate) fn upload(name: &str, doc: &Document, auth: &str) -> Result<Admin, String> {
     let snapshot = Replica::new(doc.clone()).snapshot().map_err(|e| e.to_string())?;
-    Ok(Admin::Publish { name: name.to_string(), snapshot })
+    Ok(Admin::Publish { name: figcraft_collab::message::seal_auth(name, auth), snapshot })
 }
 
 /// What `server`'s answer to [`upload`] means: the edit link to join the file with, and where it
@@ -72,23 +74,23 @@ pub(crate) struct Links {
 }
 
 /// The request for a new link of `access` to `file`, for others.
-fn link_request(file: &str, access: Access) -> Admin {
-    Admin::CreateLink { file: file.to_string(), access, label: format!("Shared ({})", access.id()) }
+fn link_request(file: &str, access: Access, auth: &str) -> Admin {
+    Admin::CreateLink { file: file.to_string(), access, label: figcraft_collab::message::seal_auth(&format!("Shared ({})", access.id()), auth) }
 }
 
 /// The requests that revoke `file`'s links with the ids in `revoke`, then, to `create`, make a new
 /// edit link and a new view link.
-pub(crate) fn link_requests(file: &str, revoke: &[String], create: bool) -> Vec<Admin> {
+pub(crate) fn link_requests(file: &str, revoke: &[String], create: bool, auth: &str) -> Vec<Admin> {
     let mut requests: Vec<Admin> = revoke.iter().map(|id| Admin::Revoke { file: file.to_string(), link: id.clone() }).collect();
-    requests.extend(create.then(|| [link_request(file, Access::Edit), link_request(file, Access::View)]).into_iter().flatten());
+    requests.extend(create.then(|| [link_request(file, Access::Edit, auth), link_request(file, Access::View, auth)]).into_iter().flatten());
     requests
 }
 
 /// The request for a comment link to `file`, asked on a connection of its own once
 /// [`made_links`] gave the others: a server from before comment links can't read it and closes
 /// the connection (the file is shared without one then).
-pub(crate) fn comment_request(file: &str) -> Vec<Admin> {
-    vec![link_request(file, Access::Comment)]
+pub(crate) fn comment_request(file: &str, auth: &str) -> Vec<Admin> {
+    vec![link_request(file, Access::Comment, auth)]
 }
 
 /// The comment link the answers to [`comment_request`] made, if any.

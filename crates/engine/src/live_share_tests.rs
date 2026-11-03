@@ -73,7 +73,7 @@ impl LiveLink for Link {
         s.published.push(opts);
         Ok(())
     }
-    fn share(&mut self, server: &str, file: &str, owner: &str, revoke: &[String], create: bool) -> Result<Option<Shared>, String> {
+    fn share(&mut self, server: &str, file: &str, owner: &str, revoke: &[String], create: bool, _auth: &str) -> Result<Option<Shared>, String> {
         let mut s = self.0.lock().unwrap();
         if s.offline {
             return Err("no answer from the server".into());

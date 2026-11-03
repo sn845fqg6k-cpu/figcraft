@@ -277,19 +277,27 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
                 crate::live::name_field(app, ui, egui::Id::unique("pref_user_name"), 160.0);
             });
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(tr("Server for online sharing"));
-                // Where Share ▸ Online keeps files and join codes are asked; no key here
-                // (preferences are saved as text).
-                let name = tr("Server for online sharing");
-                if let Some(url) = crate::widgets::text_field_named(ui, egui::Id::unique("pref_publish_server"), &prefs.publish_server, 220.0, name) {
-                    app.run("pref.publishServer", json!({"url": url}));
-                }
-                let usual = prefs.publish_server == figcraft_engine::live::DEFAULT_SERVER;
-                if crate::widgets::button(ui, tr("Reset"), false, !usual).on_hover_text(tr("Back to the FigCraft server")).clicked() {
-                    app.run("pref.publishServer", json!({}));
-                }
-            });
+            if figcraft_engine::live::internal_locked() {
+                ui.horizontal(|ui| {
+                    ui.label(tr("Server for online sharing"));
+                    ui.label(figcraft_engine::live::DEFAULT_SERVER);
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(tr("Server for online sharing"));
+                    // Where Share ▸ Online keeps files and join codes are asked; no key here
+                    // (preferences are saved as text).
+                    let name = tr("Server for online sharing");
+                    if let Some(url) = crate::widgets::text_field_named(ui, egui::Id::unique("pref_publish_server"), &prefs.publish_server, 220.0, name)
+                    {
+                        app.run("pref.publishServer", json!({"url": url}));
+                    }
+                    let usual = prefs.publish_server == figcraft_engine::live::DEFAULT_SERVER;
+                    if crate::widgets::button(ui, tr("Reset"), false, !usual).on_hover_text(tr("Back to the FigCraft server")).clicked() {
+                        app.run("pref.publishServer", json!({}));
+                    }
+                });
+            }
             if prefs.publish_server.is_empty() {
                 crate::widgets::label(ui, tr("Online sharing is off: files are shared on the local network only."), t.text_secondary);
             }

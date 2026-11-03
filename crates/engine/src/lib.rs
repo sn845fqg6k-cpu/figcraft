@@ -160,6 +160,13 @@ pub struct Session {
     pub agent: Option<String>,
     /// Where an attached AI agent last worked ([`Session::agent_presence_at`]): display only.
     pub agent_presence: Option<agent::AgentPresence>,
+    /// ERP access token for sharing. Kept in this process only: not a preference and not written
+    /// into the command journal.
+    pub auth_token: String,
+    /// Name shown for the signed-in person. The server records the name it reads itself.
+    pub auth_name: String,
+    /// ERP refresh token, same lifetime as [`Session::auth_token`].
+    pub auth_refresh: String,
 }
 
 impl Default for Session {

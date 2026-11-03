@@ -108,6 +108,10 @@ pub struct LiveUi {
     focus_join: bool,
     /// Share on the local network (else online, through the server in Preferences).
     pub local: bool,
+    /// ERP login for a private build. The password is forgotten after a successful sign-in.
+    pub login_user: String,
+    pub login_pass: String,
+    pub login_error: String,
     /// The Share popover's Advanced part shows; what it sets for a local network share: only
     /// this computer can join, and the port (empty: the usual one).
     pub advanced: bool,
@@ -834,6 +838,10 @@ pub(crate) fn failure_text(reason: &str) -> Cow<'_, str> {
 /// can't host a session).
 fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     name_row(app, ui, t, egui::Id::unique("live_name"));
+    if figcraft_engine::live::internal_locked() {
+        locked_start(app, ui, t);
+        return;
+    }
     let server = app.session.prefs.publish_server.trim().to_string();
     let hosts = app.session.live.can_host();
     if !hosts && server.is_empty() {
@@ -859,6 +867,117 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
         start_sharing(app, local, &server);
     }
     join_and_advanced(app, ui, t, |app, ui, t| share_advanced(app, ui, t, local, &server));
+}
+
+/// A private build: sign in, then share on the server named when the app was compiled.
+fn locked_start(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    let server = figcraft_engine::live::DEFAULT_SERVER.trim().to_string();
+    login_row(app, ui, t);
+    if server.is_empty() {
+        widgets::label(ui, tr("This build has no share server configured."), t.danger);
+    } else {
+        widgets::label(ui, tr("Sharing uses the configured server."), t.text_secondary);
+        online_note(app, ui, t, &server);
+    }
+    let enabled = (!app.session.auth_token.is_empty() || !app.session.auth_refresh.is_empty()) && !server.is_empty();
+    if widgets::button(ui, tr("Start sharing"), true, enabled).clicked() && access_still_valid(app) {
+        start_sharing(app, false, &server);
+    }
+    join_and_advanced(app, ui, t, |app, ui, t| server_key_row(app, ui, t, &server));
+}
+
+/// Username and password for the ERP. A private build will not share until this succeeds.
+fn login_row(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    if !app.session.auth_token.is_empty() {
+        widgets::label(ui, &trf("Signed in as {name}", &[("name", &app.session.auth_name)]), t.text);
+        if widgets::button(ui, tr("Log out"), false, true).clicked() {
+            app.run("auth.signOut", json!({}));
+            app.ui.live.login_pass.clear();
+        }
+        return;
+    }
+    widgets::label(ui, tr("Log in before sharing."), t.text_secondary);
+    ui.horizontal(|ui| {
+        widgets::label(ui, tr("Username"), t.text);
+        if let Some(name) = widgets::text_field_named(ui, egui::Id::unique("live_login_user"), &app.ui.live.login_user, 160.0, tr("Username")) {
+            app.ui.live.login_user = name.chars().filter(|c| !c.is_control()).take(80).collect();
+        }
+    });
+    ui.horizontal(|ui| {
+        widgets::label(ui, tr("Password"), t.text);
+        if let Some(pass) = widgets::secret_field_named(ui, egui::Id::unique("live_login_pass"), &app.ui.live.login_pass, 160.0, tr("Password")) {
+            app.ui.live.login_pass = pass.chars().filter(|c| !c.is_control()).take(200).collect();
+        }
+    });
+    if widgets::button(ui, tr("Log in"), true, true).clicked() {
+        sign_in(app);
+    }
+    if !app.ui.live.login_error.is_empty() {
+        widgets::label(ui, &app.ui.live.login_error, t.danger);
+    }
+}
+
+/// The access token is still the one to send. If it was cleared and a refresh token remains,
+/// ask the ERP for a new one (`/open/Login/refreshToken`).
+fn access_still_valid(app: &mut FigApp) -> bool {
+    if !app.session.auth_token.is_empty() {
+        return true;
+    }
+    let refresh = app.session.auth_refresh.clone();
+    if refresh.is_empty() {
+        return false;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match crate::erp::refresh(&refresh) {
+            Ok(signed) => {
+                app.ui.live.login_error.clear();
+                app.run("auth.signIn", json!({"token": signed.access, "refresh": signed.refresh, "name": signed.name}));
+                true
+            }
+            Err(e) => {
+                app.ui.live.login_error = e;
+                false
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = refresh;
+        false
+    }
+}
+
+fn sign_in(app: &mut FigApp) {
+    let user = app.ui.live.login_user.clone();
+    let pass = std::mem::take(&mut app.ui.live.login_pass);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match crate::erp::login(&user, &pass) {
+            Ok(signed) => {
+                app.ui.live.login_error.clear();
+                app.run("auth.signIn", json!({"token": signed.access, "refresh": signed.refresh, "name": signed.name}));
+            }
+            Err(e) => app.ui.live.login_error = e,
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (user, pass);
+        app.ui.live.login_error = "ERP login needs the desktop app".into();
+    }
+}
+
+/// The server key for online sharing, remembered only for `server`.
+fn server_key_row(app: &mut FigApp, ui: &mut Ui, t: &Tokens, server: &str) {
+    ui.horizontal(|ui| {
+        widgets::label(ui, tr("Server key"), t.text);
+        let shown = app.ui.live.share_key.as_ref().and_then(|(at, key)| (at == server).then_some(key.as_str())).unwrap_or_default();
+        if let Some(key) = widgets::secret_field_named(ui, egui::Id::unique("live_share_key"), shown, 200.0, tr("Server key")) {
+            let key: String = key.trim().chars().filter(|c| !c.is_whitespace() && !c.is_control()).take(128).collect();
+            app.ui.live.share_key = if key.is_empty() { None } else { Some((server.trim().to_string(), key)) };
+        }
+    });
 }
 
 /// Start sharing the open file on the local network, or online on `server` (the one in
@@ -902,14 +1021,7 @@ fn share_advanced(app: &mut FigApp, ui: &mut Ui, t: &Tokens, local: bool, server
     widgets::label(ui, tr("Another server, or one that needs its key. The usual server is set in Preferences."), t.text_secondary);
     // The server key (a server that needs one; the address in Preferences is without it).
     // It is remembered for the server it was typed for, so it never leaks to another one.
-    ui.horizontal(|ui| {
-        widgets::label(ui, tr("Server key"), t.text);
-        let shown = app.ui.live.share_key.as_ref().and_then(|(at, key)| (at == server).then_some(key.as_str())).unwrap_or_default();
-        if let Some(key) = widgets::secret_field_named(ui, egui::Id::unique("live_share_key"), shown, 200.0, tr("Server key")) {
-            let key: String = key.trim().chars().filter(|c| !c.is_whitespace() && !c.is_control()).take(128).collect();
-            app.ui.live.share_key = if key.is_empty() { None } else { Some((server.trim().to_string(), key)) };
-        }
-    });
+    server_key_row(app, ui, t, server);
     if widgets::button(ui, tr("Publish to another server…"), false, true).clicked() {
         open_publish(app);
         ui.close();
@@ -1294,7 +1406,12 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
 /// it (the server in Preferences is what Share ▸ Online uses: this dialog is for another one).
 pub fn open_publish(app: &mut FigApp) {
     let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
-    app.ui.live.publish = Some(PublishForm { server: app.ui.live.last_server.clone(), name, info: None });
+    let server = if figcraft_engine::live::internal_locked() {
+        figcraft_engine::live::DEFAULT_SERVER.to_string()
+    } else {
+        app.ui.live.last_server.clone()
+    };
+    app.ui.live.publish = Some(PublishForm { server, name, info: None });
     app.ui.live.focus_publish = true;
 }
 
@@ -1347,7 +1464,12 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
             t.text,
         );
         widgets::label(ui, tr("Server address"), t.text_secondary);
-        let resp = ui.add(
+        if figcraft_engine::live::internal_locked() {
+            widgets::label(ui, figcraft_engine::live::DEFAULT_SERVER, t.text);
+            server_key_row(app, ui, &t, figcraft_engine::live::DEFAULT_SERVER);
+        }
+        let resp = ui.add_enabled(
+            !figcraft_engine::live::internal_locked(),
             egui::TextEdit::singleline(&mut form.server)
                 .hint_text("wss://server/ or ws://server:47900/?key=…")
                 .desired_width(380.0)
