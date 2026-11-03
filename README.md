@@ -14,6 +14,10 @@
 <h1 align="center">FigCraft</h1>
 
 <p align="center">
+  <a href="README.zh-CN.md">中文</a>
+</p>
+
+<p align="center">
   <b>Interface design and prototyping: open source, collaborative and built in pure Rust.</b><br>
   Frames, auto layout, components and variants, vector networks, styles, variables and prototypes,<br>
   in a native app that opens instantly and works offline. Open source, and yours.

@@ -1,33 +1,35 @@
-# 我们自己的 FigCraft 仓库
+# Our FigCraft fork
 
-本地远程已经设好，不要再改：
+[中文](zh-CN/our-fork.md)
 
-| 远程 | 地址 | 用途 |
+The local remotes are already set. Leave them as they are:
+
+| Remote | URL | Use |
 |---|---|---|
-| `origin` | https://github.com/sn845fqg6k-cpu/figcraft.git | 我们的仓库。只往这里推送 |
-| `upstream` | https://github.com/storytold/figcraft.git | 上游主仓库。只从这里拉取，不要推送 |
+| `origin` | https://github.com/sn845fqg6k-cpu/figcraft.git | Our repository. Push only here |
+| `upstream` | https://github.com/storytold/figcraft.git | Upstream. Pull from here. Do not push |
 
-当前分支是 `main`，跟踪 `origin/main`。下面的命令都在仓库根目录、PowerShell 里执行。
+The current branch is `main`, tracking `origin/main`. Run the commands below from the repository root in PowerShell.
 
-## 把我们的改进推上去
+## Push our changes
 
-先看改了什么：
+See what changed:
 
 ```powershell
 git status
 ```
 
-提交并推到我们的仓库：
+Commit and push to our repository:
 
 ```powershell
 git add .
-git commit -m "这里写这次改了什么"
+git commit -m "what changed this time"
 git push origin main
 ```
 
-`git push` 不带参数也会推到 `origin`，也就是我们的仓库，不会推到上游。
+`git push` with no arguments also goes to `origin`, our repository. It does not go to upstream.
 
-## 上游更新后，合并进我们的仓库
+## Merge upstream updates into our repository
 
 ```powershell
 git fetch upstream
@@ -35,11 +37,11 @@ git merge upstream/main
 git push origin main
 ```
 
-合并前如果本地有没提交的修改，先按上一节提交，再合并。
+If you have uncommitted changes, commit them with the steps above before merging.
 
-## 合并出了冲突
+## Conflicts
 
-Git 会标出冲突文件。打开这些文件，删掉 `<<<<<<<`、`=======`、`>>>>>>>` 这三行标记，留下要保留的内容，然后：
+Git names the conflicted files. Open them, delete the `<<<<<<<`, `=======` and `>>>>>>>` markers, and keep the text you want. Then:
 
 ```powershell
 git add .
@@ -47,16 +49,16 @@ git commit
 git push origin main
 ```
 
-这次 `git commit` 不用再写说明，Git 会用它准备好的合并说明。
+This `git commit` needs no message. Git already prepared the merge message.
 
-想放弃这一次合并、回到合并前：
+To drop the merge and return to the state before it:
 
 ```powershell
 git merge --abort
 ```
 
-## 不要做的事
+## Do not
 
-- 不要 `git push upstream`。我们没有上游的推送权限，那样也会把我们的改动送去主仓库。
-- 不要 `git push --force`。会改写已经推上去的历史。
-- 不要改 `git config` 里的用户名和邮箱，除非你自己要换提交身份。
+- Do not `git push upstream`. We have no push access there, and it would send our changes to the main repository.
+- Do not `git push --force`. It rewrites history that is already pushed.
+- Do not change the user name or email in `git config` unless you mean to change the commit identity.
