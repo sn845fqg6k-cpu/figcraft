@@ -108,6 +108,13 @@ pub struct LiveUi {
     focus_join: bool,
     /// Share on the local network (else online, through the server in Preferences).
     pub local: bool,
+    /// ERP login for a private build. The password is forgotten after a successful sign-in.
+    pub login_user: String,
+    pub login_pass: String,
+    pub login_error: String,
+    /// What the code a local network share starts with lets people do: edit, or only look (the
+    /// edit code then doesn't show until it is picked).
+    pub local_access: Access,
     /// The Share popover's Advanced part shows; what it sets for a local network share: only
     /// this computer can join, and the port (empty: the usual one).
     pub advanced: bool,
@@ -434,6 +441,67 @@ pub fn chat_box(app: &mut FigApp, ctx: &egui::Context) {
         chat.typed = Some(now);
     }
     app.ui.live.chat = Some(chat);
+}
+
+/// While the active document's live session is disconnected: a thin strip across the top of the
+/// canvas that says so, with what can be done about it. Returns how much of the canvas it takes.
+pub fn connection_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) -> f32 {
+    const H: f32 = 30.0;
+    let live = app.session.live();
+    if !app.session.docs.get(app.session.active).is_some_and(|d| crate::tabs::live_lost(app, d.uid)) {
+        return 0.0;
+    }
+    let (text, retry, gone) = match &live.status {
+        Status::Failed { reason } => {
+            (trf("Not connected: {reason}. Your work is still in this tab.", &[("reason", &failure_text(reason))]), Some(tr("Try again")), true)
+        }
+        Status::Reconnecting { .. } => {
+            (tr("Disconnected. Your edits stay here and sync when the connection returns. Reconnecting…").to_string(), Some(tr("Retry now")), false)
+        }
+        _ => (tr("Disconnected. Reconnecting…").to_string(), None, false),
+    };
+    let t = Tokens::get(ctx);
+    let ink = text_on(t.danger);
+    let (mut try_now, mut save, mut dismiss) = (false, false, false);
+    let strip = Rect::from_min_size(canvas.min, vec2(canvas.width(), H));
+    egui::Area::new(egui::Id::unique("live_connection_banner")).order(egui::Order::Foreground).fixed_pos(strip.min).show(ctx, |ui| {
+        ui.set_min_size(strip.size());
+        ui.set_max_size(strip.size());
+        ui.painter().rect_filled(strip, egui::CornerRadius::ZERO, t.danger);
+        let button = |ui: &mut Ui, label: &str| {
+            ui.add(
+                egui::Button::new(egui::RichText::new(label).font(regular(11.0)).color(ink))
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::new(1.0, ink))
+                    .corner_radius(egui::CornerRadius::same(4)),
+            )
+            .clicked()
+        };
+        let inner = strip.shrink2(vec2(12.0, 0.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if gone {
+                dismiss = button(ui, tr("Dismiss"));
+                save = button(ui, tr("Save a copy…"));
+            }
+            if let Some(label) = retry {
+                try_now = button(ui, label);
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(text).font(regular(11.0)).color(ink)).truncate());
+            });
+        });
+    });
+    if try_now {
+        app.run("collab.reconnect", json!({}));
+    }
+    if save {
+        app.save_as_dialog();
+    }
+    if dismiss {
+        app.run("collab.leave", json!({}));
+    }
+    H
 }
 
 /// While you spotlight, or someone does and you stopped following them: a banner on the canvas to
@@ -834,6 +902,10 @@ pub(crate) fn failure_text(reason: &str) -> Cow<'_, str> {
 /// can't host a session).
 fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     name_row(app, ui, t, egui::Id::unique("live_name"));
+    if figcraft_engine::live::internal_locked() {
+        locked_start(app, ui, t);
+        return;
+    }
     let server = app.session.prefs.publish_server.trim().to_string();
     let hosts = app.session.live.can_host();
     if !hosts && server.is_empty() {
@@ -852,6 +924,7 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     }
     if local {
         widgets::label(ui, tr("People on your network join with a code. Nothing goes through a server."), t.text_secondary);
+        local_access_choice(app, ui);
     } else {
         online_note(app, ui, t, &server);
     }
@@ -861,10 +934,65 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     join_and_advanced(app, ui, t, |app, ui, t| share_advanced(app, ui, t, local, &server));
 }
 
+/// A private build: sign in, then share on the server named when the app was compiled.
+fn locked_start(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    let server = figcraft_engine::live::share_server().trim().to_string();
+    login_row(app, ui, t);
+    if server.is_empty() {
+        widgets::label(ui, tr("This build has no share server configured."), t.danger);
+    } else {
+        widgets::label(ui, tr("Sharing uses the configured server."), t.text_secondary);
+        online_note(app, ui, t, &server);
+    }
+    let enabled = crate::login::ensure(app) && !server.is_empty();
+    if widgets::button(ui, tr("Start sharing"), true, enabled).clicked() && crate::login::ensure(app) {
+        start_sharing(app, false, &server);
+    }
+    join_and_advanced(app, ui, t, |app, ui, t| server_key_row(app, ui, t, &server));
+}
+
+/// Who is signed in. The password is asked when the app starts, not from here.
+fn login_row(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    if app.session.auth_token.is_empty() {
+        widgets::label(ui, tr("Sign in to use FigCraft."), t.text_secondary);
+        return;
+    }
+    widgets::label(ui, &trf("Signed in as {name}", &[("name", &app.session.auth_name)]), t.text);
+    if widgets::button(ui, tr("Log out"), false, true).clicked() {
+        crate::login::forget(app);
+    }
+}
+
+/// The server key for online sharing, remembered only for `server`.
+fn server_key_row(app: &mut FigApp, ui: &mut Ui, t: &Tokens, server: &str) {
+    ui.horizontal(|ui| {
+        widgets::label(ui, tr("Server key"), t.text);
+        let shown = app.ui.live.share_key.as_ref().and_then(|(at, key)| (at == server).then_some(key.as_str())).unwrap_or_default();
+        if let Some(key) = widgets::secret_field_named(ui, egui::Id::unique("live_share_key"), shown, 200.0, tr("Server key")) {
+            let key: String = key.trim().chars().filter(|c| !c.is_whitespace() && !c.is_control()).take(128).collect();
+            app.ui.live.share_key = if key.is_empty() { None } else { Some((server.trim().to_string(), key)) };
+        }
+    });
+}
+
+/// What the code of a local network share lets people do, picked before it starts: edit the file
+/// or only look at it.
+fn local_access_choice(app: &mut FigApp, ui: &mut Ui) {
+    let levels: Vec<(Access, &str)> = LEVELS.into_iter().filter(|(a, _)| *a != Access::Comment).collect();
+    let labels: Vec<&str> = levels.iter().map(|(_, l)| tr(l)).collect();
+    let at = levels.iter().position(|(a, _)| *a == app.ui.live.local_access).unwrap_or_default();
+    if let Some((a, _)) = widgets::segmented_text(ui, &labels, at).and_then(|i| levels.get(i)) {
+        app.ui.live.local_access = *a;
+    }
+}
+
 /// Start sharing the open file on the local network, or online on `server` (the one in
 /// Preferences).
 fn start_sharing(app: &mut FigApp, local: bool, server: &str) {
     let mut params = json!({"via": if local { "local" } else { "online" }});
+    if local {
+        params["access"] = json!(app.ui.live.local_access.id());
+    }
     if local && app.ui.live.this_computer {
         params["bind"] = json!("local");
     }
@@ -902,14 +1030,7 @@ fn share_advanced(app: &mut FigApp, ui: &mut Ui, t: &Tokens, local: bool, server
     widgets::label(ui, tr("Another server, or one that needs its key. The usual server is set in Preferences."), t.text_secondary);
     // The server key (a server that needs one; the address in Preferences is without it).
     // It is remembered for the server it was typed for, so it never leaks to another one.
-    ui.horizontal(|ui| {
-        widgets::label(ui, tr("Server key"), t.text);
-        let shown = app.ui.live.share_key.as_ref().and_then(|(at, key)| (at == server).then_some(key.as_str())).unwrap_or_default();
-        if let Some(key) = widgets::secret_field_named(ui, egui::Id::unique("live_share_key"), shown, 200.0, tr("Server key")) {
-            let key: String = key.trim().chars().filter(|c| !c.is_whitespace() && !c.is_control()).take(128).collect();
-            app.ui.live.share_key = if key.is_empty() { None } else { Some((server.trim().to_string(), key)) };
-        }
-    });
+    server_key_row(app, ui, t, server);
     if widgets::button(ui, tr("Publish to another server…"), false, true).clicked() {
         open_publish(app);
         ui.close();
@@ -1068,6 +1189,7 @@ fn share_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens, share: &Share) {
         (true, Access::View) => tr("Anyone with this code can look at the file, not change it."),
         (true, Access::Comment) => tr("Anyone with this code can look at the file and comment on it, not change it."),
         (true, Access::Edit) => tr("Anyone with this code can edit the file."),
+        (false, Access::View) => tr("Anyone on your network with this code can look at the file, not change it, while this app stays open."),
         (false, _) => tr("Anyone on your network with this code can edit the file, while this app stays open."),
     };
     widgets::label(ui, who, t.text_secondary);
@@ -1081,7 +1203,8 @@ fn share_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens, share: &Share) {
 }
 
 /// What the code shown lets people do, to pick from the levels the share has links for: a server
-/// has links (and codes) for looking only and for commenting; a session this app hosts doesn't.
+/// has links (and codes) for looking only and for commenting; a session this app hosts on the
+/// local network has one for looking only.
 fn access_choice(app: &mut FigApp, ui: &mut Ui, share: &Share) {
     let levels: Vec<(Access, &str)> = LEVELS.into_iter().filter(|(a, _)| share.links.as_ref().is_some_and(|l| l.of(*a).is_some())).collect();
     if levels.len() < 2 {
@@ -1294,7 +1417,12 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
 /// it (the server in Preferences is what Share ▸ Online uses: this dialog is for another one).
 pub fn open_publish(app: &mut FigApp) {
     let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
-    app.ui.live.publish = Some(PublishForm { server: app.ui.live.last_server.clone(), name, info: None });
+    let server = if figcraft_engine::live::internal_locked() {
+        figcraft_engine::live::share_server().to_string()
+    } else {
+        app.ui.live.last_server.clone()
+    };
+    app.ui.live.publish = Some(PublishForm { server, name, info: None });
     app.ui.live.focus_publish = true;
 }
 
@@ -1347,7 +1475,12 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
             t.text,
         );
         widgets::label(ui, tr("Server address"), t.text_secondary);
-        let resp = ui.add(
+        if figcraft_engine::live::internal_locked() {
+            widgets::label(ui, figcraft_engine::live::share_server(), t.text);
+            server_key_row(app, ui, &t, figcraft_engine::live::share_server());
+        }
+        let resp = ui.add_enabled(
+            !figcraft_engine::live::internal_locked(),
             egui::TextEdit::singleline(&mut form.server)
                 .hint_text("wss://server/ or ws://server:47900/?key=…")
                 .desired_width(380.0)

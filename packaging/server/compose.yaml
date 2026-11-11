@@ -1,0 +1,27 @@
+# Local figcraft-server. From this directory:
+#
+#   copy .env.example .env
+#   docker compose up --build -d
+#
+# FIGCRAFT_ENV in .env selects config/dev.toml, config/test.toml or config/prod.toml
+# (default dev). The Redis address lives in that file. The first build compiles Rust in
+# the image. Later, `docker compose up -d` is enough unless the server code changed.
+# Restart after editing the toml: the process reads it at startup.
+
+name: figcraft
+
+services:
+  figcraft-server:
+    build:
+      context: ../..
+      dockerfile: packaging/server/Dockerfile
+    image: figcraft-server:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:47900:47900"
+    volumes:
+      - figcraft-data:/data
+      - ./config/${FIGCRAFT_ENV:-dev}.toml:/etc/figcraft-server/server.toml:ro
+
+volumes:
+  figcraft-data:

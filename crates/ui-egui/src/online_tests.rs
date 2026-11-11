@@ -48,6 +48,7 @@ type Shared = Arc<Mutex<Script>>;
 
 struct Link(Shared);
 
+/// A session you are in as `role` under `name`.
 fn info(role: Role, name: &str) -> SessionInfo {
     SessionInfo {
         role,
@@ -61,6 +62,7 @@ fn info(role: Role, name: &str) -> SessionInfo {
         address: "192.168.1.20:47900".into(),
         network: true,
         access: Access::Edit,
+        view: None,
     }
 }
 
@@ -119,7 +121,7 @@ impl LiveLink for Link {
         };
         Ok((HostInfo::default(), Some(reply)))
     }
-    fn share(&mut self, _: &str, file: &str, owner: &str, revoke: &[String], create: bool) -> Result<Option<SharedLinks>, String> {
+    fn share(&mut self, _: &str, file: &str, owner: &str, revoke: &[String], create: bool, _: &str) -> Result<Option<SharedLinks>, String> {
         let mut s = self.0.lock().unwrap();
         s.shares.push((file.into(), owner.into(), revoke.to_vec(), create));
         let n = s.shares.iter().filter(|a| a.3).count();

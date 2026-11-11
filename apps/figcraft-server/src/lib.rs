@@ -10,6 +10,7 @@
 
 pub mod abuse;
 pub mod cli;
+mod identity;
 pub mod codes;
 pub mod config;
 pub mod directory;
@@ -59,6 +60,10 @@ impl Running {
 /// Start serving `cfg.data` on `cfg.listen`. Files that can't be read are skipped and logged.
 pub fn start(cfg: &Config) -> Result<Running, String> {
     cfg.check()?;
+    identity::configure(&cfg.redis_url, &cfg.erp_appid);
+    if !cfg.redis_url.trim().is_empty() {
+        log::info!("login checks are on (app {})", cfg.erp_appid.trim());
+    }
     let store = Store::open(&cfg.data, cfg.store())?;
     for p in store.problems() {
         log::warn!("{p}");

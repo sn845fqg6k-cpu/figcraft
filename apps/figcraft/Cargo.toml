@@ -37,6 +37,13 @@ env_logger = { version = "0.11", default-features = false, features = ["auto-col
 [target.'cfg(windows)'.dependencies]
 craft-update = { workspace = true }
 windows = { version = "0.62", default-features = false, features = ["UI_ViewManagement", "System_UserProfile", "Foundation_Collections", "Gaming_Input"] }
+# Seals the saved login for the current Windows user. The file is ciphertext.
+windows-dpapi = "0.2"
+
+[target.'cfg(not(windows))'.dependencies]
+# The login file is AES-256-GCM. The key is kept in the system key store, not beside the file.
+aes-gcm = "0.10"
+keyring = { version = "3", default-features = false, features = ["apple-native", "sync-secret-service", "crypto-rust"] }
 
 # The system colour scheme (org.freedesktop.portal.Settings): winit reports no theme on Linux and
 # the BSDs, so the interface's "system" mode follows the portal's instead. zbus comes in through

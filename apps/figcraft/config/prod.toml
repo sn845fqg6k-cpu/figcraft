@@ -1,0 +1,9 @@
+# cargo build --release 和安装包默认用这份。接口与企业前端 .env.production 相同。
+erp_url = "https://api.gkwxhxcj.cn"
+erp_appid = "1001"
+erp_secret = "rtyuiqoweqwe"
+erp_client = "EnterpriseCenterWEB"
+# 正式环境的分享服务器，改成实际的 wss 地址，不要带密钥。
+share_server = "wss://figcraft.example.com/"
+# 检查更新看这个仓库的 GitHub Release，不看上游 storytold/figcraft。
+update_repo = "sn845fqg6k-cpu/figcraft"

@@ -9,10 +9,45 @@ use super::{
 /// A build can ship another one, or none: set `FIGCRAFT_DEFAULT_SERVER` when compiling to a
 /// server's address (`wss://host/`), or to nothing (`FIGCRAFT_DEFAULT_SERVER=`) for a build whose
 /// online sharing stays off until the user enters a server in Preferences.
-pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_DEFAULT_SERVER") {
-    Some(server) => server,
-    None => "wss://collab.craftapps.dev/",
+pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_INTERNAL") {
+    // A private build shares only through the server named at compile time.
+    Some(_) => match option_env!("FIGCRAFT_SHARE_SERVER") {
+        Some(server) => server,
+        None => "",
+    },
+    None => match option_env!("FIGCRAFT_DEFAULT_SERVER") {
+        Some(server) => server,
+        None => "wss://collab.craftapps.dev/",
+    },
 };
+
+/// This binary was compiled for the private deployment (`FIGCRAFT_INTERNAL` set): online sharing
+/// uses [`DEFAULT_SERVER`] only, and hosting on the local network is refused.
+pub fn internal_locked() -> bool {
+    DEPLOYED.get().is_some() || option_env!("FIGCRAFT_INTERNAL").is_some()
+}
+
+struct Deployed {
+    server: &'static str,
+}
+
+static DEPLOYED: std::sync::OnceLock<Deployed> = std::sync::OnceLock::new();
+
+/// Lock this process to `server` (no key). The desktop app calls this once at startup from the
+/// environment file chosen for the build. Tests leave it unset, so they keep the public server.
+pub fn install_deployment(server: &str) {
+    let server = server.trim();
+    if server.is_empty() {
+        return;
+    }
+    let server: &'static str = Box::leak(server.to_string().into_boxed_str());
+    let _ = DEPLOYED.set(Deployed { server });
+}
+
+/// The server sharing uses: the one [`install_deployment`] named, otherwise [`DEFAULT_SERVER`].
+pub fn share_server() -> &'static str {
+    DEPLOYED.get().map(|d| d.server).unwrap_or(DEFAULT_SERVER)
+}
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
 pub const MAX_SELECTION: usize = 10_000;
@@ -119,9 +154,33 @@ pub struct SessionInfo {
     pub address: String,
     /// Reachable from other machines (the host listens on a network address, not loopback).
     pub network: bool,
-    /// What you may do: edit, only view (a server's view link), or view and comment (its comment
-    /// link).
+    /// What you may do: edit, only view (a view link or code), or view and comment (a server's
+    /// comment link).
     pub access: Access,
+    /// A session this app hosts with a way in for looking only ([`HostOptions::view`]): its
+    /// invite link and WebSocket URL, which carry the view secret (`None`: everyone who joins
+    /// edits, or you joined).
+    pub view: Option<WayIn>,
+}
+
+impl SessionInfo {
+    /// The invite link and WebSocket URL that let people into a session this app hosts with
+    /// `access` (its own link and URL edit). `None`: no way in gives that.
+    pub fn way_in(&self, access: Access) -> Option<(&str, &str)> {
+        match access {
+            Access::Edit => Some((&self.link, &self.url)),
+            Access::View => self.view.as_ref().map(|v| (v.link.as_str(), v.url.as_str())),
+            Access::Comment => None,
+        }
+    }
+}
+
+/// A way into a session this app hosts: an invite link and the WebSocket URL it connects to,
+/// which carry the same secret.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct WayIn {
+    pub link: String,
+    pub url: String,
 }
 
 /// A file you published to a server: where, and its first share links (they carry their tokens:
@@ -306,7 +365,7 @@ pub enum NetRequest {
     /// Change who else gets into `file` on the server at `server` (its address, with `?key=…`, or
     /// the file's `owner` token): revoke the links with these ids, then, to `create`, make a new
     /// edit link and view link with their join codes ([`LiveLink::share`]).
-    Share { server: String, file: String, owner: String, revoke: Vec<String>, create: bool },
+    Share { server: String, file: String, owner: String, revoke: Vec<String>, create: bool, auth: String },
     /// Ask the server at `server` about its hosting and, with a file's owner token, manage that
     /// file ([`LiveLink::hosting`]).
     Hosting { server: String, file: String, owner: String, req: Option<Admin> },
@@ -390,6 +449,9 @@ pub struct HostOptions {
     pub doc: Arc<Document>,
     /// Shared with a join code (`collab.share`): the session's secret is short enough to type.
     pub short: bool,
+    /// Also make a second secret whose holders only look: they see every change, and the session
+    /// refuses theirs ([`SessionInfo::view`]).
+    pub view: bool,
 }
 
 /// What [`LiveLink::publish`] needs to put the open file on a server.
@@ -409,6 +471,8 @@ pub struct PublishOptions {
     /// Share the file once it is there: links and join codes for others ([`Event::Shared`];
     /// `collab.share`).
     pub share: bool,
+    /// ERP access token sent with the upload and the links it makes. Empty when nobody is signed in.
+    pub auth: String,
 }
 
 /// The networking behind live sessions, installed by the app ([`Lives::install`]). It carries
@@ -470,13 +534,23 @@ pub trait LiveLink: Send {
         Err(NO_HOSTING.into())
     }
     /// See [`NetRequest::Share`]; waits for the server. Errors never echo the key or the token.
-    fn share(&mut self, _server: &str, _file: &str, _owner: &str, _revoke: &[String], _create: bool) -> std::result::Result<Option<Shared>, String> {
+    fn share(
+        &mut self,
+        _server: &str,
+        _file: &str,
+        _owner: &str,
+        _revoke: &[String],
+        _create: bool,
+        _auth: &str,
+    ) -> std::result::Result<Option<Shared>, String> {
         Err(NO_HOSTING.into())
     }
     /// Send `req` and wait for the answer (through the methods above).
     fn request(&mut self, req: NetRequest) -> NetReply {
         match req {
-            NetRequest::Share { server, file, owner, revoke, create } => NetReply::Share(self.share(&server, &file, &owner, &revoke, create)),
+            NetRequest::Share { server, file, owner, revoke, create, auth } => {
+                NetReply::Share(self.share(&server, &file, &owner, &revoke, create, &auth))
+            }
             NetRequest::Plugins { server, req } => NetReply::Plugins(self.plugins(&server, req)),
             NetRequest::Library { link, req } => NetReply::Library(self.library(&link, req)),
             NetRequest::Upload(o) => NetReply::Upload(self.upload(o)),
@@ -496,6 +570,8 @@ pub trait LiveLink: Send {
     /// End session `session` (stop hosting or leave); the others go on. Nothing for a session
     /// that is over already.
     fn leave(&mut self, session: SessionId);
+    /// Session `session` is waiting to reconnect: try now.
+    fn retry(&mut self, _session: SessionId) {}
     /// Your latest presence in `session` (the link throttles and coalesces).
     fn presence(&mut self, session: SessionId, p: &Presence);
     /// A message for `session`'s server (document changes), sent in order.

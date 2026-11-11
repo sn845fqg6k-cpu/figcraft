@@ -31,7 +31,7 @@ use crate::manage;
 use crate::net::{Duplex, NetLimits, config, open, shutdown};
 use crate::requests;
 pub use crate::requests::Publish;
-use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
+use crate::throttle::{PRESENCE_INTERVAL, Paced, Throttle, earliest};
 
 /// A joined (or joining) session. Dropping it leaves.
 pub struct Guest {
@@ -44,6 +44,8 @@ enum Cmd {
     /// For the server, in order (document changes).
     Send(ClientMsg),
     Leave,
+    /// Try now rather than after the pause under way (reconnecting).
+    Retry,
     /// The reader of connection `epoch` got its welcome.
     Welcomed(u64),
     /// Connection `epoch` ended.
@@ -67,7 +69,7 @@ impl Guest {
                     });
                 if let Err(o) = asked.and_then(|(file, token)| resolved(&mut cfg, file, token)) {
                     if let Next::Stop(Some(e)) = after(unresolved(&cfg, o), &cfg, false, &mut 0, &inbox) {
-                        inbox.push(e);
+                        inbox.push(*e);
                     }
                     return;
                 }
@@ -94,7 +96,7 @@ impl Guest {
             // which stopping takes away again.
             let shared = job.share.then(|| {
                 let owner = published.owner.as_deref().unwrap_or_default();
-                let made = manage::share(&job.server, job.key.as_deref(), &published.file, owner, &[], true, &cfg.limits, cfg.connect_timeout);
+                let made = manage::share(&job.server, job.key.as_deref(), &published.file, owner, &[], true, &job.auth, &cfg.limits, cfg.connect_timeout);
                 made.and_then(|s| s.ok_or_else(|| "the server didn't make the links".to_string()))
             });
             if let Some(h) = hosting {
@@ -133,6 +135,11 @@ impl Guest {
         let _ = self.cmd.send(Cmd::Send(msg));
     }
 
+    /// Reconnect now, if it is waiting to.
+    pub fn retry(&self) {
+        let _ = self.cmd.send(Cmd::Retry);
+    }
+
     /// Leave (returns at once: a connection attempt in progress ends on its own).
     pub fn leave(&mut self) {
         let _ = self.cmd.send(Cmd::Leave);
@@ -155,6 +162,9 @@ impl Drop for Guest {
     }
 }
 
+/// How long leaving keeps sending what was waiting its turn.
+const LEAVE_DRAIN: Duration = Duration::from_secs(10);
+
 /// A connected socket: reader and writer ends.
 struct Conn {
     reader: WebSocket<Duplex>,
@@ -170,10 +180,11 @@ pub(crate) fn upload_file(
     key: Option<&str>,
     name: &str,
     doc: &Document,
+    auth: &str,
     limits: &NetLimits,
     timeout: Duration,
 ) -> Result<(Invite, Published, Option<HostInfo>), String> {
-    let publish = vec![requests::upload(name, doc)?];
+    let publish = vec![requests::upload(name, doc, auth)?];
     let (replies, hosting) = match key {
         Some(key) => (manage::request(server, key, publish, limits, timeout)?, None),
         None => {
@@ -187,7 +198,7 @@ pub(crate) fn upload_file(
 
 /// Upload the document; the join settings for the new file, its links and the server's hosting.
 fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published, Option<HostInfo>), String> {
-    let (edit, published, hosting) = upload_file(&job.server, job.key.as_deref(), &job.name, &job.doc, &cfg.limits, cfg.connect_timeout)?;
+    let (edit, published, hosting) = upload_file(&job.server, job.key.as_deref(), &job.name, &job.doc, &job.auth, &cfg.limits, cfg.connect_timeout)?;
     cfg.invite = edit;
     Ok((cfg, published, hosting))
 }
@@ -217,7 +228,7 @@ fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<C
         match after(outcome, cfg, was_live, &mut attempt, inbox) {
             Next::Stop(e) => {
                 if let Some(e) = e {
-                    inbox.push(e);
+                    inbox.push(*e);
                 }
                 return;
             }
@@ -227,6 +238,11 @@ fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<C
                     match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
                         Ok(Cmd::Leave) | Err(RecvTimeoutError::Disconnected) => return,
                         Ok(Cmd::Presence(p)) => pending = Some(p),
+                        // A fresh start: the pauses grow from the beginning again.
+                        Ok(Cmd::Retry) => {
+                            attempt = 0;
+                            break;
+                        }
                         // From the old connection's client: the next welcome starts over.
                         Ok(_) => {}
                         Err(RecvTimeoutError::Timeout) => break,
@@ -267,14 +283,15 @@ fn session(
     let hello = hello(cfg, resume);
     let mut welcomed = false;
     let mut throttle = Throttle::new(PRESENCE_INTERVAL);
+    // Sync messages waiting their turn (a long queue from while offline).
+    let mut paced: Paced<ClientMsg> = Paced::new(Instant::now());
     let outcome = if send(&mut writer, &hello) {
         loop {
             let ping_at = last_ping + cfg.limits.keepalive;
-            let wake = earliest([throttle.due(), Some(ping_at)]).unwrap_or(ping_at);
+            let wake = earliest([throttle.due(), Some(ping_at), paced.due()]).unwrap_or(ping_at);
             let mut out = None;
-            let mut now_send = Vec::new();
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
-                Ok(Cmd::Send(m)) if welcomed => now_send.push(m),
+                Ok(Cmd::Send(m)) if welcomed => paced.push(m),
                 // Made for the previous connection (the sync client sends again what the server
                 // didn't get once it has caught up with this connection's welcome).
                 Ok(Cmd::Send(_)) => {}
@@ -288,17 +305,22 @@ fn session(
                 }
                 Ok(Cmd::Lost(e, o)) if e == epoch => break o,
                 Ok(Cmd::Leave) | Err(RecvTimeoutError::Disconnected) => {
+                    leave_paced(&mut writer, &mut paced);
                     let _ = writer.close(Some(CloseFrame { code: CloseCode::Normal, reason: "".into() }));
                     break Outcome::Left;
                 }
                 // From an earlier connection.
-                Ok(Cmd::Welcomed(_) | Cmd::Lost(..)) => {}
+                Ok(Cmd::Welcomed(_) | Cmd::Lost(..) | Cmd::Retry) => {}
                 Err(RecvTimeoutError::Timeout) => {}
             }
-            if !now_send.iter().all(|m| send(&mut writer, m)) {
+            let now = Instant::now();
+            let mut sent = true;
+            while sent && let Some(m) = paced.take_due(now) {
+                sent = send(&mut writer, &m);
+            }
+            if !sent {
                 break Outcome::Retry("the connection dropped".into());
             }
-            let now = Instant::now();
             let out = out.or_else(|| throttle.take_due(now));
             let ok = out.is_none_or(|p| send(&mut writer, &ClientMsg::Presence(p)));
             let ok = ok
@@ -316,6 +338,28 @@ fn session(
     shutdown(&sock);
     let _ = reader.join();
     outcome
+}
+
+/// Send what was waiting its turn before leaving, at its pace, for at most [`LEAVE_DRAIN`]: nothing
+/// waits for this thread (the app has moved on), and going faster would get the rest refused. What
+/// doesn't go is left to the sync client, which says so when you leave.
+fn leave_paced(writer: &mut WebSocket<Duplex>, paced: &mut Paced<ClientMsg>) {
+    let give_up = Instant::now() + LEAVE_DRAIN;
+    loop {
+        let now = Instant::now();
+        if now >= give_up {
+            return;
+        }
+        if let Some(m) = paced.take_due(now) {
+            if !send(writer, &m) {
+                return;
+            }
+        } else if let Some(at) = paced.due().filter(|at| *at < give_up) {
+            std::thread::sleep(at.saturating_duration_since(now));
+        } else {
+            return;
+        }
+    }
 }
 
 /// Send one message; false when the connection is gone.

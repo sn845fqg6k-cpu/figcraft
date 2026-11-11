@@ -43,24 +43,24 @@ New-Item -ItemType Directory -Force D:\figcraft-data | Out-Null
 
 ## 用 Docker
 
-镜像在 `packaging/server/Dockerfile`。在 Docker Desktop（Linux 容器）里构建，第一次会在容器里编译 Rust，比较久。在仓库根目录：
+编排文件是 `packaging/server/compose.yaml`。`.env` 里的 `FIGCRAFT_ENV` 选择 `config/dev.toml`、`config/test.toml` 或 `config/prod.toml`，不写就用开发。Redis 地址写在那份 toml 的 `redis_url`，Appid 写在 `erp_appid`。在 Docker Desktop（Linux 容器）里，第一次会在镜像里编译 Rust，比较久。
 
 ```powershell
-docker build -f packaging/server/Dockerfile -t figcraft-server .
-New-Item -ItemType Directory -Force D:\figcraft-server | Out-Null
-$toml = "listen = `"0.0.0.0:47900`"`ndata = `"/data`"`npublic_url = `"ws://127.0.0.1:47900/`"`n"
-[System.IO.File]::WriteAllText("D:\figcraft-server\server.toml", $toml, (New-Object System.Text.UTF8Encoding $false))
-docker run -d --name figcraft-server --restart unless-stopped -p 127.0.0.1:47900:47900 -v figcraft-data:/data -v D:\figcraft-server\server.toml:/etc/figcraft-server/server.toml:ro figcraft-server
-docker exec figcraft-server /usr/local/bin/figcraft-server --config /etc/figcraft-server/server.toml key
+cd packaging\server
+Copy-Item .env.example .env
+docker compose up --build -d
+docker compose exec figcraft-server /usr/local/bin/figcraft-server --config /etc/figcraft-server/server.toml key
 ```
+
+改了 toml 之后执行 `docker compose restart`，不用重新 build。`.env` 已被 git 忽略。
 
 `public_url` 必须写成你在 FigCraft 里能连上的地址。容器自己的网卡地址从 Windows 上连不到。上面这个只给本机：偏好设置里的服务器写成 `ws://127.0.0.1:47900/`，发布时贴 `key` 打出来的整段地址。
 
-文件在 Docker 卷 `figcraft-data` 里。`docker stop figcraft-server` 会先保存再停。升级时重新 `docker build`，然后 `docker rm -f figcraft-server`，再用上面的 `docker run`。卷留着，文件还在。
+文件在 Docker 卷 `figcraft-data` 里。`docker compose stop` 会先保存再停。代码有改动时再 `docker compose up --build -d`，卷留着，文件还在。
 
-镜像里没有 shell。管理命令直接执行那个二进制，不要 `docker exec` 进 bash。
+镜像里没有 shell。管理命令直接执行那个二进制，不要 `docker compose exec` 进 bash。
 
-同一局域网要把端口改成 `-p 47900:47900`，并把 `public_url` 改成 `ws://这台电脑的局域网IP:47900/`。给公网用时仍然要在前面加 TLS 反代，`public_url` 写成 `wss://你的域名/`，端口只发布到 `127.0.0.1`。
+同一局域网要在 `compose.yaml` 里把端口改成 `"47900:47900"`，并把当前环境那份 toml 的 `public_url` 改成 `ws://这台电脑的局域网IP:47900/`。给公网用时仍然要在前面加 TLS 反代，`public_url` 写成 `wss://你的域名/`，端口只发布到 `127.0.0.1`。
 
 ## 给外网的人用
 
@@ -96,3 +96,31 @@ sudo -u figcraft figcraft-server --config /etc/figcraft-server/server.toml key
 在跑着的窗口里 Ctrl+C 会先保存再退出。硬杀掉也不会丢掉已经确认的修改。
 
 备份时先停服务器，再复制整个数据目录（Windows 上是 `D:\figcraft-data`）。里面有全部文件和 **服务器密钥**，按服务器本身一样保管。
+
+## 内部版本：固定服务器，并且要登录
+
+桌面程序按编译方式自己选 ERP 和分享服务器，不用每次设环境变量：
+
+| 怎么编译 | 用的文件 |
+| --- | --- |
+| `cargo run`、调试 | `apps/figcraft/config/dev.toml` |
+| `FIGCRAFT_ENV=test` 的打包 | `apps/figcraft/config/test.toml` |
+| `cargo build --release`、安装包默认 | `apps/figcraft/config/prod.toml` |
+
+Windows 安装包：`packaging/windows/package.ps1` 默认正式环境，测试包加 `-Config test`。
+
+文件里有 ERP 地址、Appid、签名密钥和分享服务器。分享服务器不要带密钥，密钥仍在分享窗口里填写。
+
+这样编译出来的程序一打开就要求登录。登录成功后，access token 和 refresh token 加密写在设置目录的 `auth.bin`，文件里不是 JSON。Windows 上这份密文只属于当前用户，换一台电脑或换一个账户要重新登录。access token 快到期时自动调用 `POST /open/Login/refreshToken`。刷新失败才再问密码。退出登录会删掉这份文件。
+
+同时：
+
+- 不能改「在线分享所用的服务器」
+- 不能在本地网络分享，也不能加入别人的本地分享
+- 不能把文件发到别的服务器
+
+登录请求和现有 ERP 前端一样：`POST /open/Login/userLogin`，正文是 `{ "data": "<json>" }`，签名是把 `appid`、`data`、`secret`、`timestamp` 排序后做 MD5。
+
+服务器核对登录用的是它自己那份 toml 里的 `redis_url` 和 `erp_appid`。不写 `redis_url` 就不检查登录。ThinkPHP 把用户存在 `user_token:{accessToken}`，值是 PHP `serialize` 的数组。分享链接上的名字用这里的 `nickname`，没有再用 `username`。
+
+`erp_appid` 要和登录时写入的 `from_appid` 一致。对不上，或者 Redis 里没有这个 token，发布和新建分享链接都会被拒绝。已经发出去的链接，token 过期之后仍然能用。看的人不用登录。

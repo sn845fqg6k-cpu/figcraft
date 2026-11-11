@@ -68,7 +68,9 @@ impl Backend for Store {
                 Err(err) => log::error!("file {file}: a change couldn't be logged: {err}"),
             }
         }
-        log.entries += journal.len();
+        // A refusal changes nothing in the document: it counts toward the log's size (bytes), but
+        // not toward the entries that make a snapshot rewrite worthwhile.
+        log.entries += journal.iter().filter(|j| !matches!(j, figcraft_collab::Journal::Refused { .. })).count();
         log.dirty = true;
         e.meta.updated = now();
         if log.entries >= after || log.bytes + log.pending.len() as u64 >= max_bytes {
@@ -178,6 +180,11 @@ impl Backend for Store {
         let failed = |reason: &str| Handled::from(AdminReply::Failed { reason: reason.to_string() });
         let file = match &req {
             Admin::Publish { name, snapshot } => {
+                let (name, auth) = figcraft_collab::message::unseal_auth(name);
+                if let Err(e) = crate::identity::require_login(auth) {
+                    log::info!("event=publish_refused ip={ip} reason={e:?}");
+                    return Handled::from(AdminReply::Failed { reason: e });
+                }
                 return match self.publish_open(ip, name, snapshot) {
                     Ok((file, edit, view, owner)) => {
                         let expires = self.files.get(&file.id).and_then(|e| self.expires(&e.meta));
@@ -217,13 +224,25 @@ impl Backend for Store {
             return failed(BUSY_ADMIN.into());
         }
         match req {
-            Admin::Publish { name, snapshot } => match self.publish(&name, &snapshot) {
-                Ok((file, edit, view)) => AdminReply::Published { file, edit, view }.into(),
-                Err(e) => failed(e),
-            },
+            Admin::Publish { name, snapshot } => {
+                let (name, auth) = figcraft_collab::message::unseal_auth(&name);
+                match crate::identity::require_login(auth) {
+                    Err(e) => failed(e),
+                    Ok(()) => match self.publish(name, &snapshot) {
+                        Ok((file, edit, view)) => AdminReply::Published { file, edit, view }.into(),
+                        Err(e) => failed(e),
+                    },
+                }
+            }
             Admin::Files => AdminReply::Files(self.list(open)).into(),
             Admin::Links { file } => self.links(&file).map_or_else(failed, |l| AdminReply::Links(l).into()),
-            Admin::CreateLink { file, access, label } => self.create_link(&file, access, &label).map_or_else(failed, |l| AdminReply::Link(l).into()),
+            Admin::CreateLink { file, access, label } => {
+                let (label, auth) = figcraft_collab::message::unseal_auth(&label);
+                match crate::identity::label_for(auth, label) {
+                    Err(e) => failed(e),
+                    Ok(label) => self.create_link(&file, access, &label).map_or_else(failed, |l| AdminReply::Link(l).into()),
+                }
+            }
             Admin::Revoke { file, link } => self.revoke_all(file, link),
             Admin::Rename { file, name } => self.rename(&file, &name).map_or_else(failed, |()| AdminReply::Done.into()),
             Admin::Listing => AdminReply::Listing(self.listing(open)).into(),

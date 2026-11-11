@@ -11,8 +11,63 @@
 pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
     icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.figcraft.png")),
     accent: Some([0x02, 0xda, 0x96]),
+    // This fork's releases. install_update_repo replaces it from the environment file.
+    repo: "sn845fqg6k-cpu/figcraft",
     ..craft_update::suite::FIGCRAFT
 };
+
+/// The release repository a build asked for. The updater reads [`update_app`], which is this
+/// once `install_update_repo` has accepted one, and [`UPDATE_APP`] until then.
+#[cfg(not(target_arch = "wasm32"))]
+static CONFIGURED_UPDATE: std::sync::OnceLock<craft_update::app::App> = std::sync::OnceLock::new();
+
+/// Use `owner/name` for update checks. A second call keeps the first. The string has to be an
+/// owner and a repository name: the checker only asks GitHub.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn install_update_repo(repo: &str) -> Result<(), &'static str> {
+    let repo = repo.trim();
+    if !repo_ok(repo) {
+        return Err("update_repo must be a GitHub owner/name, such as sn845fqg6k-cpu/figcraft");
+    }
+    let repo: &'static str = Box::leak(repo.to_string().into_boxed_str());
+    let app = craft_update::app::App { repo, ..UPDATE_APP };
+    let _ = CONFIGURED_UPDATE.set(app);
+    Ok(())
+}
+
+/// The app the updater checks and installs. After [`install_update_repo`], that repository;
+/// otherwise [`UPDATE_APP`].
+#[cfg(not(target_arch = "wasm32"))]
+pub fn update_app() -> &'static craft_update::app::App {
+    CONFIGURED_UPDATE.get().unwrap_or(&UPDATE_APP)
+}
+
+/// `owner/name` with no scheme, extra slash or spaces.
+#[cfg(not(target_arch = "wasm32"))]
+fn repo_ok(repo: &str) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else { return false };
+    let part = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 100
+            && !s.starts_with('.')
+            && !s.ends_with('.')
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    };
+    part(owner) && part(name)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod update_repo_tests {
+    use super::repo_ok;
+
+    #[test]
+    fn a_fork_name_is_accepted_and_a_url_is_not() {
+        assert!(repo_ok("sn845fqg6k-cpu/figcraft"));
+        assert!(!repo_ok("https://github.com/sn845fqg6k-cpu/figcraft"));
+        assert!(!repo_ok("storytold/figcraft/releases"));
+        assert!(!repo_ok(""));
+    }
+}
 
 pub mod a11y;
 pub mod bidi;
@@ -20,6 +75,9 @@ pub mod canvas;
 pub mod cjk;
 pub mod control;
 pub mod dialogs;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod erp;
+mod login;
 pub mod home;
 pub mod i18n;
 pub mod icons;
@@ -53,6 +111,8 @@ mod a11y_tests;
 mod async_dialog_tests;
 #[cfg(test)]
 mod blend_preview_tests;
+#[cfg(test)]
+mod bool_menu_icon_tests;
 #[cfg(test)]
 mod branch_ui_tests;
 #[cfg(test)]
@@ -124,6 +184,8 @@ mod home_recents_tests;
 #[cfg(test)]
 mod home_tests;
 #[cfg(test)]
+mod host_save_tests;
+#[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
 mod ime_tests;
@@ -134,6 +196,8 @@ mod inspect_fields_tests;
 #[cfg(test)]
 mod layers_behaviour_tests;
 #[cfg(test)]
+mod layers_component_rows_tests;
+#[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
 mod layers_keyboard_tests;
@@ -141,6 +205,8 @@ mod layers_keyboard_tests;
 mod layers_keys_tests;
 #[cfg(test)]
 mod layers_rename_tests;
+#[cfg(test)]
+mod layers_wide_names_tests;
 #[cfg(test)]
 mod library_beacon_tests;
 #[cfg(test)]
@@ -172,7 +238,11 @@ mod menu_contrast_tests;
 #[cfg(test)]
 mod menu_input_tests;
 #[cfg(test)]
+mod mirror_tests;
+#[cfg(test)]
 mod missing_fonts_tests;
+#[cfg(test)]
+mod naming_tests;
 #[cfg(test)]
 mod online_tests;
 #[cfg(test)]
@@ -221,6 +291,8 @@ mod proto_reorder_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
 #[cfg(test)]
+mod region_fill_rows_tests;
+#[cfg(test)]
 mod resources_tests;
 #[cfg(test)]
 mod sampled_color_tests;
@@ -245,15 +317,21 @@ mod text_enter_tests;
 #[cfg(test)]
 mod text_link_tests;
 #[cfg(test)]
+mod text_mixed_fill_tests;
+#[cfg(test)]
 mod titlebar_tests;
 #[cfg(test)]
 mod ui_params_tests;
 #[cfg(test)]
 mod ui_scale_tests;
 #[cfg(test)]
+mod variable_picker_tests;
+#[cfg(test)]
 mod variables_export_ui_tests;
 #[cfg(test)]
 mod variables_rename_tests;
+#[cfg(test)]
+mod variables_select_tests;
 #[cfg(test)]
 mod variants_discovery_tests;
 #[cfg(test)]
@@ -481,6 +559,11 @@ pub struct UiState {
     /// A selection box drawn from the keyboard (`select.area`), page `[x0, y0, x1, y1]` with the
     /// marquee's start at `x0, y0`.
     pub key_box: Option<[f64; 4]>,
+    /// Pick select (#1836): the layer the pink outline is on while the keys walk the layer tree
+    /// (Tab or the selection-box chord again while the box shows; Space selects it), with the uid
+    /// of its document: layer ids are only unique within a document, and the pick holds only on
+    /// the page shown ([`FigApp::picked`]).
+    pub pick: Option<(u64, NodeId)>,
     /// Layers panel search: open, the filter text, the shift-click range anchor and the selection
     /// the tree last revealed (ancestors expand and the row scrolls into view when it changes).
     pub layer_search: bool,
@@ -545,6 +628,9 @@ pub struct UiState {
     pub mobile_panel: Option<MobilePanel>,
     /// The window was narrow (one side panel at a time) at the last frame.
     pub narrow: bool,
+    /// The window is mirrored for a right-to-left UI language: the icon rail and the layers panel
+    /// on the right, the Design panel on the left, popovers beside it on its right.
+    pub mirrored: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
     /// The branch review dialog, while open.
@@ -590,6 +676,8 @@ pub struct UiState {
     pub online: online::OnlineUi,
     /// The window was asked to close with unsaved changes: the question shows.
     pub confirm_close: bool,
+    /// A tab was asked to close with unsaved changes: the question for it, then its save.
+    pub close_tab: Option<windows::TabClose>,
     /// The file a Save as started from the unsaved-changes question is saving: the window closes
     /// once it is saved, and stays open if the dialog is cancelled or the save fails.
     pub close_after_save_as: Option<u64>,
@@ -656,6 +744,7 @@ impl Default for UiState {
             context_menu: None,
             key_menu: false,
             key_box: None,
+            pick: None,
             layer_search: false,
             layer_filter: String::new(),
             layer_anchor: None,
@@ -693,6 +782,7 @@ impl Default for UiState {
             left_collapsed: false,
             mobile_panel: None,
             narrow: false,
+            mirrored: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
             branch_review: None,
@@ -713,6 +803,7 @@ impl Default for UiState {
             live: live::LiveUi::default(),
             online: online::OnlineUi::default(),
             confirm_close: false,
+            close_tab: None,
             close_after_save_as: None,
             save_on_close: false,
         }
@@ -748,6 +839,9 @@ pub struct FigApp {
     panels_unsaved: bool,
     /// Control-channel requests waiting for the next frame.
     pub control_queue: Vec<ControlRequest>,
+    /// Windows a control request waits for: the window's pass count when the wait began and the
+    /// app-clock time it began, to tell a window that stopped drawing ([`control::background`]).
+    control_waits: std::collections::BTreeMap<u64, (u64, f64)>,
     /// Input events from the control channel (`ui.input`) for the next frame's raw input.
     pub control_input: Vec<egui::Event>,
     /// Frames drawn and what asked for them (`ui.inspect`).
@@ -798,6 +892,10 @@ pub struct FigApp {
     /// Test-only count of the one IME observation each viewport pass makes.
     #[cfg(test)]
     pub(crate) ime_observations: u32,
+    /// The saved login was read once this run.
+    pub(crate) auth_restored: bool,
+    /// A refresh failed this run: don't ask the ERP again every frame.
+    pub(crate) auth_hold: bool,
 }
 
 /// What to do with the result of a command run in the background.

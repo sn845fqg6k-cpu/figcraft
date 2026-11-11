@@ -110,7 +110,7 @@ mod view_state;
 pub use derived::{changed_nodes, normalize};
 pub use doc_state::{DocState, History, HistoryEntry, Interaction, PREVIEW_READ_ONLY, Preedit, TextEdit, VersionPreview};
 pub use error::{EngineError, Result, bad};
-pub use prefs::{Clipboard, MAX_RECENT_ACTIONS, Prefs, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_SIZES, UiRequest, clamp_ui_scale};
+pub use prefs::{Clipboard, DefaultProps, MAX_RECENT_ACTIONS, Prefs, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_SIZES, UiRequest, clamp_ui_scale};
 pub use session::Forward;
 pub use view_state::ViewState;
 
@@ -119,6 +119,8 @@ pub struct Session {
     pub docs: Vec<DocState>,
     pub active: usize,
     pub clipboard: Clipboard,
+    /// Edit ▸ Set default properties: what new shapes and text drawn with the tools take.
+    pub default_props: DefaultProps,
     pub prefs: Prefs,
     /// A command changed a preference that is kept at once (not only when the app quits): the app
     /// saves the preferences and clears this.
@@ -160,6 +162,17 @@ pub struct Session {
     pub agent: Option<String>,
     /// Where an attached AI agent last worked ([`Session::agent_presence_at`]): display only.
     pub agent_presence: Option<agent::AgentPresence>,
+    /// ERP access token for sharing. Kept in this process only: not a preference and not written
+    /// into the command journal.
+    pub auth_token: String,
+    /// Name shown for the signed-in person. The server records the name it reads itself.
+    pub auth_name: String,
+    /// ERP refresh token, same lifetime as [`Session::auth_token`].
+    pub auth_refresh: String,
+    /// Unix time when `auth_token` stops being accepted (0: the app hasn't been told).
+    pub auth_expires: i64,
+    /// Unix time when `auth_refresh` stops being accepted (0: the app hasn't been told).
+    pub auth_refresh_expires: i64,
 }
 
 impl Default for Session {
@@ -275,6 +288,8 @@ mod dash_cap_tests;
 #[cfg(test)]
 mod datafill_tests;
 #[cfg(test)]
+mod default_props_tests;
+#[cfg(test)]
 mod design_paste_tests;
 #[cfg(test)]
 mod dev_measurements_tests;
@@ -312,6 +327,8 @@ mod export_behaviour_tests;
 mod export_bench_tests;
 #[cfg(test)]
 mod export_depth_tests;
+#[cfg(test)]
+mod export_profile_tests;
 #[cfg(test)]
 mod extended_chain_tests;
 #[cfg(test)]
@@ -367,6 +384,8 @@ mod images_left_in_file_tests;
 #[cfg(test)]
 mod import_export_tests;
 #[cfg(test)]
+mod import_ids_tests;
+#[cfg(test)]
 mod import_journal_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
@@ -383,7 +402,11 @@ mod invite_links_tests;
 #[cfg(test)]
 mod jam_open_tests;
 #[cfg(test)]
+mod jpg_export_tests;
+#[cfg(test)]
 mod keymap_tests;
+#[cfg(test)]
+mod layout_suggest_tests;
 #[cfg(test)]
 mod library_beacon_tests;
 #[cfg(test)]
@@ -457,11 +480,15 @@ mod pen_end_tests;
 #[cfg(test)]
 mod pen_overlay_tests;
 #[cfg(test)]
+mod pen_undo_tests;
+#[cfg(test)]
 mod pen_vector_edit_tests;
 #[cfg(test)]
 mod penpot_export_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
+#[cfg(test)]
+mod place_crosshair_tests;
 #[cfg(test)]
 mod placed_image_size_tests;
 #[cfg(test)]
@@ -545,6 +572,8 @@ mod slot_tests;
 #[cfg(test)]
 mod stored_ids_tests;
 #[cfg(test)]
+mod stroke_cap_error_tests;
+#[cfg(test)]
 mod stroke_style_tests;
 #[cfg(test)]
 mod style_tests;
@@ -574,6 +603,8 @@ mod text_motion_tests;
 mod text_style_picker_tests;
 #[cfg(test)]
 mod text_tail_tests;
+#[cfg(test)]
+mod text_weight_step_tests;
 #[cfg(test)]
 mod textfit_tests;
 #[cfg(test)]

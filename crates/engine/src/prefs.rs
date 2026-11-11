@@ -149,7 +149,7 @@ impl Default for Prefs {
             plugins: Vec::new(),
             plugin_settings: BTreeMap::new(),
             plugin_directory: None,
-            publish_server: live::DEFAULT_SERVER.into(),
+            publish_server: live::share_server().into(),
             recent_files: Vec::new(),
             online_files: Vec::new(),
             getting_started_dismissed: false,
@@ -171,6 +171,18 @@ impl Default for Prefs {
 pub struct UiRequest {
     pub kind: String,
     pub data: Value,
+}
+
+/// What Edit ▸ Set default properties keeps: the properties new layers drawn with the tools take,
+/// as Copy properties copies them (fills, strokes and their settings, effects, opacity, blend,
+/// corners; for text also the font, size, line height and letter spacing). One set for shapes
+/// (rectangles, ellipses, polygons and stars), set from any layer but text, and one for text.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DefaultProps {
+    /// For new rectangles, ellipses, polygons and stars.
+    pub shape: Option<Value>,
+    /// For new text.
+    pub text: Option<Value>,
 }
 
 /// Clipboard contents (internal; the UI mirrors to the system clipboard).

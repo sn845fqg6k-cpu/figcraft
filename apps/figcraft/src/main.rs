@@ -23,7 +23,9 @@ compile_error!("Windows GNU builds must set windows_slim_errors to keep UI Autom
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod args;
+mod auth_file;
 mod control_server;
+mod deploy;
 mod gamepad;
 mod graphics;
 mod recovery;
@@ -126,7 +128,12 @@ impl eframe::App for App {
     fn on_exit(&mut self) {
         // With the app out of reach (busy), its recovery copies stay for the next start.
         let copies = recovery::lock(&self.recovery).take();
-        with_app(|fig| services::shutdown(fig, services::config_dir().as_deref(), copies));
+        with_app(|fig| {
+            services::shutdown(fig, services::config_dir().as_deref(), copies);
+            // An update that waits for the app to close installs now: the app lives in a
+            // thread-local, and the process can end without dropping it.
+            fig.start_pending_update();
+        });
         // Everything is kept: end before the windows' teardown, where AppKit's Touch Bar support
         // throws on the content view AccessKit restores (craft-libs#3, #781).
         #[cfg(target_os = "macos")]
@@ -135,12 +142,15 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    deploy::install();
     // Windows: the update helper is a copy of this program started with `--finish-update`.
+    // It runs after the deployment config, so it installs a release from the same repository
+    // the check asked.
     #[cfg(windows)]
-    if let Some(result) = craft_update::self_update::finish(&figcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+    if let Some(result) = craft_update::self_update::finish(figcraft_ui_egui::update_app(), &std::env::args_os().skip(1).collect::<Vec<_>>()) {
         std::process::exit(i32::from(result.is_err()));
     }
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!(
@@ -208,6 +218,7 @@ fn main() -> eframe::Result {
     if let Some(prefs) = svc.prefs.clone() {
         session.prefs = prefs;
     }
+    deploy::pin(&mut session);
     let recovered = recovery_root.as_deref().map(|r| recovery::recover_all(r, &mut session)).unwrap_or_default();
     let mut copies = recovery_root.as_deref().and_then(recovery::Recovery::start);
     // Copies of online files stay until their files arrive from their servers.

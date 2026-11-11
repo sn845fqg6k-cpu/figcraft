@@ -10,7 +10,9 @@ fn join(s: &mut Session, p: &Value) -> Result<Value> {
         Some(code) => code,
         None => req_string(CMD, p, "link").map_err(|_| bad(CMD, "give the join `code` you were told, or the invite `link`"))?,
     };
-    let link = join_target(&s.prefs.publish_server, &typed).map_err(|e| bad(CMD, e))?;
+    let server = if super::internal_locked() { super::share_server() } else { s.prefs.publish_server.as_str() };
+    let link = join_target(server, &typed).map_err(|e| bad(CMD, e))?;
+    super::join_allowed(super::internal_locked(), super::share_server(), &link).map_err(|e| bad(CMD, e))?;
     let id = start_join(s, CMD, &link, None, None, None)?;
     Ok(s.live.get(id).map_or(Value::Null, |l| s.summary(l)))
 }
@@ -42,10 +44,36 @@ fn leave(s: &mut Session, p: &Value) -> Result<Value> {
         None => s.live.shown(s.tab()),
     };
     let ended = id.and_then(|id| s.live.end(id));
-    if ended.as_ref().is_some_and(|l| l.syncing() && l.role() == Some(Role::Guest)) {
-        s.message = Some("You left the session; your copy stays open here".into());
+    if let Some(l) = ended.as_ref().filter(|l| l.syncing() && l.role() == Some(Role::Guest)) {
+        // What was still on its way may be held back for what's before it (an undo waits for its edit).
+        s.message = Some(if l.client().is_some_and(|c| c.pending() > 0) {
+            "You left before your last changes were confirmed: others may not see them all, and your copy stays open here".into()
+        } else {
+            "You left the session; your copy stays open here".into()
+        });
     }
     Ok(json!({"ended": ended.is_some_and(|l| l.status.active())}))
+}
+
+/// Back into the open file's session now: a reconnect that is waiting tries at once, and a session
+/// that couldn't go on is joined again in its tab.
+fn reconnect(s: &mut Session, _: &Value) -> Result<Value> {
+    const CMD: &str = "collab.reconnect";
+    let live = s.live();
+    let (id, reconnecting, rejoinable) = (live.id, matches!(live.status, Status::Reconnecting { .. }), live.rejoinable());
+    if reconnecting {
+        if let Some(why) = crate::file_access::network_refused() {
+            return Err(EngineError::Disabled(CMD.to_string(), why));
+        }
+        if let Some(net) = s.live.link() {
+            net.retry(id);
+        }
+    } else if rejoinable {
+        s.live_rejoin(CMD, id)?;
+    } else {
+        return Err(bad(CMD, "this file has no lost live session to reconnect"));
+    }
+    Ok(json!({"status": s.live().status.id()}))
 }
 
 fn stop(s: &mut Session, p: &Value) -> Result<Value> {
@@ -162,6 +190,41 @@ fn spotlight(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"spotlighting": s.live().spotlighting}))
 }
 
+fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "auth.signIn";
+    let token = req_string(CMD, p, "token")?;
+    let token = token.trim();
+    if token.is_empty() || token.len() > 512 || token.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(bad(CMD, "`token` must be the login token"));
+    }
+    let name: String = string(p, "name").unwrap_or_default().trim().chars().filter(|c| !c.is_control()).take(80).collect();
+    let refresh = string(p, "refresh").unwrap_or_default();
+    let refresh = refresh.trim();
+    if refresh.len() > 512 || refresh.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(bad(CMD, "`refresh` must be the refresh token"));
+    }
+    s.auth_token = token.to_string();
+    s.auth_name = if name.is_empty() { "user".into() } else { name };
+    s.auth_refresh = refresh.to_string();
+    s.auth_expires = nonneg(p, "expires");
+    s.auth_refresh_expires = nonneg(p, "refreshExpires");
+    Ok(json!({"signedIn": true, "name": s.auth_name}))
+}
+
+fn nonneg(p: &Value, key: &str) -> i64 {
+    get(p, key).and_then(Value::as_i64).filter(|n| *n >= 0).unwrap_or(0)
+}
+
+fn sign_out(s: &mut Session, _: &Value) -> Result<Value> {
+    s.auth_token.clear();
+    s.auth_name.clear();
+    s.auth_refresh.clear();
+    s.auth_expires = 0;
+    s.auth_refresh_expires = 0;
+    Ok(json!({"signedIn": false}))
+}
+
+/// The live session commands (`collab.*`).
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
@@ -174,7 +237,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.share",
             "Share with a join code",
-            "{via?: \"online\" (default: the open file is kept on the server in Preferences, `pref.publishServer`, and the server hands out the codes) | \"local\" (this app hosts it for people on the same network; no server), access?: \"edit\" (default) | \"comment\" (online only: view and comment, not edit) | \"view\" (online only: which code `code` is), server? (online: another server's address, with ?key=… when it needs its key), key? (online: the server's key, when the address has none), name? (online: the file's name there), port?, bind?: \"lan\" (default) | \"local\" (this machine only) | an IP address (local)} → the open file's session as `collab.peers` gives it: `code` is what others type to join (`collab.join {code}`, the Join field), `link` an invite link. Local: at once, the code carries the host's IPv4 address, port and secret (K7M2Q-…, 20 symbols). Online: status \"connecting\" first; once live `code` is the server's (K7M-2QX-9TD) and `share` is {via, access, shared, editCode, viewCode, commentCode, editLink, viewLink, commentLink}: links made for others (commentCode and commentLink null from a server older than comment links) (the file's own links in `published` stay yours); `code` stays null when the server is older than join codes (give `share.editLink` / `share.viewLink` instead). Called again while shared: only switches which code `code` is (`access`). Called after `collab.stop` on a file that is still on the server: new links and codes for that same file (nothing is published twice). `collab.stop` stops sharing",
+            "{via?: \"online\" (default: the open file is kept on the server in Preferences, `pref.publishServer`, and the server hands out the codes) | \"local\" (this app hosts it for people on the same network; no server), access?: \"edit\" (default) | \"comment\" (online only: view and comment, not edit) | \"view\" (look only: their edits are refused): which code `code` is, server? (online: another server's address, with ?key=… when it needs its key), key? (online: the server's key, when the address has none), name? (online: the file's name there), port?, bind?: \"lan\" (default) | \"local\" (this machine only) | an IP address (local)} → the open file's session as `collab.peers` gives it: `code` is what others type to join (`collab.join {code}`, the Join field), `link` the invite link to give with it and `url` its WebSocket URL (local: the ones that go with `code`, so a view-only code's link and URL let people look only; online: your own link to the file, which edits: `share` has the link that goes with each code). Local: at once, the code carries the host's IPv4 address, port and secret (K7M2Q-…, 20 symbols), and `share` is {via, access, shared, editCode, viewCode, editLink, viewLink}: the edit and view-only ways in, each with its own secret (commentCode and commentLink null). Online: status \"connecting\" first; once live `code` is the server's (K7M-2QX-9TD) and `share` is {via, access, shared, editCode, viewCode, commentCode, editLink, viewLink, commentLink}: links made for others (commentCode and commentLink null from a server older than comment links) (the file's own links in `published` stay yours); `code` stays null when the server is older than join codes (give `share.editLink` / `share.viewLink` instead). Called again while shared: only switches which code `code` is (`access`). Called after `collab.stop` on a file that is still on the server: new links and codes for that same file (nothing is published twice). `collab.stop` stops sharing",
             false,
             share
         ),
@@ -193,9 +256,16 @@ pub fn specs() -> Vec<CommandSpec> {
             join
         ),
         spec!(
+            "collab.reconnect",
+            "Reconnect live session",
+            "{} → {status}: for the open file's session when it is disconnected: a reconnect that is waiting tries now, and a session that couldn't go on (`failed`, the file open in its tab) is joined again there, what you changed since going on top (your whole version opening beside it when some of it can't). Refused when nothing was lost",
+            false,
+            reconnect
+        ),
+        spec!(
             "collab.leave",
             "Leave live session",
-            "{session? (a session's id from `collab.peers`'s `sessions`, e.g. a join still on its way; default: the open file's session)} → {ended}: the synced file stays open as a local copy",
+            "{session? (a session's id from `collab.peers`'s `sessions`, e.g. a join still on its way; default: the open file's session)} → {ended}: the synced file stays open as a local copy (also how a tab stops showing a session that couldn't go on)",
             false,
             leave
         ),
@@ -230,7 +300,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.peers",
             "People in this file",
-            "{} → the open file's session (each open file has its own or none): {available, canHost (false in the browser: it can only join), session (its id; null: this file isn't in a session), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, access: edit|view|comment (view: a server's view link, edits are refused; comment: its comment link, edits other than to comment threads are refused), readOnly (the open file can't be edited now: view only, comment only, or being published), published (a file you published: {server, file, name, edit, view}), code (the join code to give others, when the file was shared with `collab.share`; null otherwise or while it is on its way), share ({via: online|local, access, shared (false: a file of yours on a server that nobody else gets into now), editCode, viewCode, commentCode, editLink, viewLink, commentLink (what others join with; null when not shared)} or null), follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}], sessions: [{session, document (index of its open document; null for a join on its way), status, reason, role, fileName, link, peers (how many others)}] (every session of the app)}",
+            "{} → the open file's session (each open file has its own or none): {available, canHost (false in the browser: it can only join), session (its id; null: this file isn't in a session), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, access: edit|view|comment (view: a view link or code, a server's or a local network share's, edits are refused; comment: a server's comment link, edits other than to comment threads are refused), readOnly (the open file can't be edited now: view only, comment only, or being published), published (a file you published: {server, file, name, edit, view}), code (the join code to give others, when the file was shared with `collab.share`; null otherwise or while it is on its way), share ({via: online|local, access, shared (false: a file of yours on a server that nobody else gets into now), editCode, viewCode, commentCode, editLink, viewLink, commentLink (what others join with; null when not shared)} or null), follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}], sessions: [{session, document (index of its open document; null for a join on its way), status, reason, role, fileName, link, peers (how many others)}] (every session of the app)}",
             false,
             |s, _| Ok(s.live_summary())
         ),
@@ -255,6 +325,20 @@ pub fn specs() -> Vec<CommandSpec> {
             "{text? (shown next to your cursor for everyone, at most 100 characters; empty closes it; omit to open the chat box in the app)} → {chat} (or {open}); others see it fade after 5 s without changes",
             false,
             cursor_chat
+        ),
+        spec!(
+            "auth.signIn",
+            "Sign in",
+            "{token (the ERP access token), name? (shown in this app; the server reads the name itself), refresh? (the ERP refresh token), expires? (unix time the access token stops, 0 if unknown), refreshExpires? (unix time the refresh token stops)} → {signedIn, name}. The token stays in this process and is not written to the command log",
+            false,
+            sign_in
+        ),
+        spec!(
+            "auth.signOut",
+            "Sign out",
+            "{} → {signedIn: false}",
+            false,
+            sign_out
         ),
         spec!(
             "collab.spotlight",

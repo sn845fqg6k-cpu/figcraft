@@ -14,6 +14,7 @@ impl Session {
             docs: Vec::new(),
             active: 0,
             clipboard: Clipboard::default(),
+            default_props: Default::default(),
             prefs: Prefs::default(),
             prefs_unsaved: false,
             tool: tools::ToolState::default(),
@@ -33,6 +34,11 @@ impl Session {
             pending_events: Vec::new(),
             agent: None,
             agent_presence: None,
+            auth_token: String::new(),
+            auth_name: String::new(),
+            auth_refresh: String::new(),
+            auth_expires: 0,
+            auth_refresh_expires: 0,
         }
     }
 

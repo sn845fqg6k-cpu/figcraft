@@ -109,6 +109,7 @@ pub fn share(
     owner: &str,
     revoke: &[String],
     create: bool,
+    auth: &str,
     limits: &NetLimits,
     timeout: Duration,
 ) -> Result<Option<Shared>, String> {
@@ -116,10 +117,10 @@ pub fn share(
         Some(key) => request(server, key, requests, limits, timeout),
         None => hosting(server, file, owner, requests, limits, timeout).map(|(_, replies)| replies),
     };
-    let Some(mut links) = made_links(ask(link_requests(file, revoke, create))?, create)? else { return Ok(None) };
+    let Some(mut links) = made_links(ask(link_requests(file, revoke, create, auth))?, create)? else { return Ok(None) };
     // The comment link on a connection of its own: a server from before comment links can't read
     // the request and closes it (the file is shared without one then).
-    let comment = ask(comment_request(file)).map_err(|e| log::info!("live session: no comment link from {}: {e}", server.display()));
+    let comment = ask(comment_request(file, auth)).map_err(|e| log::info!("live session: no comment link from {}: {e}", server.display()));
     links.comment = made_comment(comment.unwrap_or_default());
     // Their codes, on a connection of its own: a server from before join codes can't read the
     // request and closes it (the links are shared without codes then).
@@ -206,7 +207,17 @@ fn send(ws: &mut Ws, msg: &ClientMsg) -> Result<(), String> {
 
 /// The next answer `pick` takes, or why there is none.
 fn reply<T>(ws: &mut Ws, limits: &NetLimits, pick: impl Fn(ServerMsg) -> Option<T>) -> Result<T, String> {
+    // One deadline for the whole answer: pings, pongs and a message trickling in each renew the
+    // read timeout, so without it a server could keep a request (and the refresh permit the
+    // caller holds) waiting for as long as it liked.
+    // The request-reply bound, not the session idle one: a publish uploads a whole file and can
+    // legitimately take minutes to be answered (see `connect`).
+    let until = std::time::Instant::now() + limits.request_reply_timeout;
+    ws.get_mut().read_until(Some(until));
     loop {
+        if std::time::Instant::now() >= until {
+            return Err("no answer from the server (it took too long)".into());
+        }
         return match ws.read() {
             Ok(Message::Binary(b)) => match message::decode::<ServerMsg>(&b, limits.max_server_message) {
                 Ok(ServerMsg::Refused { reason }) => Err(format!("{REFUSED}{reason}")),
@@ -249,6 +260,27 @@ mod tests {
             let _ = tx.send(());
         });
         rx.recv_timeout(Duration::from_secs(3)).is_ok()
+    }
+
+    /// A server that keeps pinging and never answers ends the wait at the request-reply bound.
+    #[test]
+    fn reply_gives_up_at_the_request_reply_deadline_against_a_pinging_server() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            if let Ok(mut ws) = tungstenite::accept(s) {
+                while ws.send(Message::Ping(Bytes::new())).is_ok() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        });
+        let limits = NetLimits { request_reply_timeout: Duration::from_millis(400), ..NetLimits::default() };
+        let server = Endpoint { host: addr.to_string(), path: "/".into(), secure: false };
+        let mut ws = connect(&server, &limits, Duration::from_secs(2)).unwrap();
+        let started = std::time::Instant::now();
+        assert!(reply::<()>(&mut ws, &limits, |_| None).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
     }
 
     /// A server that keeps pinging and never answers the close must not pin `close` forever.
