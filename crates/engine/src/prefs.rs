@@ -149,7 +149,7 @@ impl Default for Prefs {
             plugins: Vec::new(),
             plugin_settings: BTreeMap::new(),
             plugin_directory: None,
-            publish_server: live::DEFAULT_SERVER.into(),
+            publish_server: live::share_server().into(),
             recent_files: Vec::new(),
             online_files: Vec::new(),
             getting_started_dismissed: false,

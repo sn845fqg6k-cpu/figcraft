@@ -24,4 +24,45 @@ fn main() {
     let sha = std::env::var("FIGCRAFT_BUILD_SHA").unwrap_or_default();
     println!("cargo::rustc-env=FIGCRAFT_BUILD_SHA={sha}");
     println!("cargo::rerun-if-env-changed=FIGCRAFT_BUILD_SHA");
+    deploy_config();
+}
+
+/// `cargo run` (debug) embeds `config/dev.toml`. A release build embeds `config/prod.toml`.
+/// `FIGCRAFT_ENV=dev|test|prod` picks one of the three for a package.
+fn deploy_config() {
+    println!("cargo::rerun-if-env-changed=FIGCRAFT_ENV");
+    println!("cargo::rerun-if-changed=config/dev.toml");
+    println!("cargo::rerun-if-changed=config/test.toml");
+    println!("cargo::rerun-if-changed=config/prod.toml");
+    let name = match std::env::var("FIGCRAFT_ENV") {
+        Ok(raw) => {
+            let name = raw.trim().to_ascii_lowercase();
+            if matches!(name.as_str(), "dev" | "test" | "prod") {
+                name
+            } else {
+                println!("cargo::warning=FIGCRAFT_ENV={raw} is not dev, test or prod");
+                profile_env()
+            }
+        }
+        Err(_) => profile_env(),
+    };
+    println!("cargo::rustc-env=FIGCRAFT_ENV_NAME={name}");
+    let src = std::path::Path::new("config").join(format!("{name}.toml"));
+    let Ok(text) = std::fs::read_to_string(&src) else {
+        println!("cargo::error=missing {}", src.display());
+        std::process::exit(1);
+    };
+    let Ok(dir) = std::env::var("OUT_DIR") else {
+        println!("cargo::error=OUT_DIR is not set");
+        std::process::exit(1);
+    };
+    let out = std::path::Path::new(&dir).join("deploy.toml");
+    if std::fs::write(&out, text).is_err() {
+        println!("cargo::error=couldn't write {}", out.display());
+        std::process::exit(1);
+    }
+}
+
+fn profile_env() -> String {
+    if std::env::var("PROFILE").ok().as_deref() == Some("release") { "prod".into() } else { "dev".into() }
 }

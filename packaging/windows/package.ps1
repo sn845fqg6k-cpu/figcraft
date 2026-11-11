@@ -24,6 +24,7 @@
 #>
 param(
   [ValidateSet('x64', 'x86', 'arm64')] [string] $Arch = 'x64',
+  [ValidateSet('dev', 'test', 'prod')] [string] $Config = 'prod',
   [switch] $SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -53,6 +54,8 @@ $Dist = if ($env:DIST) { $env:DIST } else { Join-Path $Root 'dist\release' }
 $TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root 'target' }
 New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
+# Debug builds pick config/dev.toml on their own. This script packages a release, prod unless -Config says otherwise.
+$env:FIGCRAFT_ENV = $Config
 if (-not $env:FIGCRAFT_BUILD_SHA) { $env:FIGCRAFT_BUILD_SHA = (git -C $Root rev-parse HEAD 2>$null) }
 if (-not $env:FIGCRAFT_BUILD_DATE) { $env:FIGCRAFT_BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd') }
 
@@ -60,7 +63,7 @@ if (-not $env:FIGCRAFT_BUILD_DATE) { $env:FIGCRAFT_BUILD_DATE = (Get-Date).ToUni
 $HasCli = Test-Path (Join-Path $Root 'apps\figcraft-cli\Cargo.toml')
 $Bins = @('figcraft'); if ($HasCli) { $Bins += 'figcraft-cli' }
 
-Write-Output "FigCraft $Version for Windows $Arch ($Target): $($Bins -join ', ')"
+Write-Output "FigCraft $Version for Windows $Arch ($Target), config $Config: $($Bins -join ', ')"
 
 if (-not $SkipBuild) {
   # Static CRT: no VC++ redistributable needed. Scoped to the target so host build scripts and

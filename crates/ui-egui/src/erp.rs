@@ -2,9 +2,11 @@
 //! sort the sign fields, skip nothing that is present, MD5 the `key=value` pairs joined by `&`,
 //! and send the body as `{ "data": "<json>" }`. The browser's WASM signer is not used here.
 //!
-//! The API address, app id and secret come from the environment (`FIGCRAFT_ERP_URL`,
-//! `FIGCRAFT_ERP_APPID`, `FIGCRAFT_ERP_SECRET`). They are not compiled into the binary.
-//! `FIGCRAFT_ERP_CLIENT` defaults to `EnterpriseCenterWEB`.
+//! The API address, app id and secret come from the environment file the desktop app installs
+//! at startup (`FIGCRAFT_ERP_URL`, `FIGCRAFT_ERP_APPID` and `FIGCRAFT_ERP_SECRET` still override
+//! a missing install, for a one-off run). `FIGCRAFT_ERP_CLIENT` defaults to `EnterpriseCenterWEB`.
+
+use std::sync::OnceLock;
 
 use md5::{Digest, Md5};
 use serde::Serialize;
@@ -12,8 +14,9 @@ use serde_json::{Value, json};
 
 const MISSING: &str = "ERP login is not configured.";
 const BAD_JSON: &str = "the login server sent something that isn't JSON";
-const EXPIRED: &str = "login expired: sign in again";
+pub(crate) const EXPIRED: &str = "login expired: sign in again";
 
+#[derive(Clone)]
 struct Erp {
     base: String,
     appid: String,
@@ -22,11 +25,37 @@ struct Erp {
     language: String,
 }
 
-/// What a successful login leaves in this process.
+static INSTALLED: OnceLock<Erp> = OnceLock::new();
+
+/// What a successful login leaves in this process. `expires` and `refresh_expires` are unix times.
 pub struct SignedIn {
     pub access: String,
     pub refresh: String,
     pub name: String,
+    pub expires: i64,
+    pub refresh_expires: i64,
+}
+
+/// Use this ERP for the rest of the process. The desktop app calls it once, from the environment
+/// file baked in for this build.
+pub fn install(base: &str, appid: &str, secret: &str, client: &str) -> Result<(), String> {
+    let cfg = assemble(base, appid, secret, client)?;
+    let _ = INSTALLED.set(cfg);
+    Ok(())
+}
+
+/// An environment file was installed, so the app asks for a login before the document.
+pub fn configured() -> bool {
+    INSTALLED.get().is_some()
+}
+
+/// The access token is still worth sending. Unknown expiry (`0`) counts as still good; a known
+/// one is refreshed a little early so a share doesn't fail on the last seconds.
+pub fn access_current(token: &str, expires: i64) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    expires <= 0 || unix_now().saturating_add(120) < expires
 }
 
 /// Sign in with the ERP. The password is not kept.
@@ -42,7 +71,7 @@ pub fn login(username: &str, password: &str) -> Result<SignedIn, String> {
     let access = field(&data, "accessToken")?;
     let refresh = field(&data, "refreshToken").unwrap_or_default();
     let name = user_name(&cfg, &access).unwrap_or(username);
-    Ok(SignedIn { access, refresh, name })
+    Ok(SignedIn { access, refresh, name, expires: expiry(&data, "expires", 864_000), refresh_expires: expiry(&data, "expires_refresh", 8_640_000) })
 }
 
 /// Ask the ERP for a new access token. Used when a share is refused because the old one expired.
@@ -57,7 +86,7 @@ pub fn refresh(refresh_token: &str) -> Result<SignedIn, String> {
     let access = field(&data, "accessToken")?;
     let refresh = field(&data, "refreshToken").unwrap_or(refresh_token);
     let name = user_name(&cfg, &access).unwrap_or_else(|| "user".into());
-    Ok(SignedIn { access, refresh, name })
+    Ok(SignedIn { access, refresh, name, expires: expiry(&data, "expires", 864_000), refresh_expires: expiry(&data, "expires_refresh", 8_640_000) })
 }
 
 #[derive(Serialize)]
@@ -73,18 +102,43 @@ struct Refresh<'a> {
 }
 
 fn config() -> Result<Erp, String> {
+    if let Some(cfg) = INSTALLED.get() {
+        return Ok(cfg.clone());
+    }
     let base = std::env::var("FIGCRAFT_ERP_URL").map_err(|_| MISSING.to_string())?;
     let appid = std::env::var("FIGCRAFT_ERP_APPID").map_err(|_| MISSING.to_string())?;
     let secret = std::env::var("FIGCRAFT_ERP_SECRET").map_err(|_| MISSING.to_string())?;
+    let client = std::env::var("FIGCRAFT_ERP_CLIENT").unwrap_or_else(|_| "EnterpriseCenterWEB".into());
+    assemble(&base, &appid, &secret, &client)
+}
+
+fn assemble(base: &str, appid: &str, secret: &str, client: &str) -> Result<Erp, String> {
     let base = base.trim().trim_end_matches('/').to_string();
     let appid = appid.trim().to_string();
     let secret = secret.trim().to_string();
+    let client = {
+        let client = client.trim();
+        if client.is_empty() { "EnterpriseCenterWEB".to_string() } else { client.to_string() }
+    };
     if base.is_empty() || appid.is_empty() || secret.is_empty() || !(base.starts_with("https://") || base.starts_with("http://")) {
         return Err(MISSING.into());
     }
-    let client = std::env::var("FIGCRAFT_ERP_CLIENT").unwrap_or_else(|_| "EnterpriseCenterWEB".into());
     let language = std::env::var("FIGCRAFT_ERP_LOCALE").unwrap_or_else(|_| "zh-CN".into());
     Ok(Erp { base, appid, secret, client, language })
+}
+
+fn unix_now() -> i64 {
+    web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| i64::try_from(d.as_secs()).unwrap_or(0)).unwrap_or(0)
+}
+
+/// `expires` from the ERP is a unix time. A small number is a duration in seconds.
+fn expiry(data: &Value, key: &str, fallback: i64) -> i64 {
+    let now = unix_now();
+    match data.get(key).and_then(Value::as_i64) {
+        Some(n) if n > 1_000_000_000 => n,
+        Some(n) if n > 0 => now.saturating_add(n),
+        _ => now.saturating_add(fallback),
+    }
 }
 
 fn clean(value: &str, max: usize) -> Result<String, String> {
@@ -111,7 +165,7 @@ struct Empty {}
 
 fn post(cfg: &Erp, path: &str, body: &impl Serialize, token: Option<&str>) -> Result<Value, String> {
     let payload = serde_json::to_string(body).map_err(|_| "couldn't build the login request".to_string())?;
-    let timestamp = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| i64::try_from(d.as_secs()).unwrap_or(0)).unwrap_or(0);
+    let timestamp = unix_now();
     let signature = sign(&[("appid", Part::Text(&cfg.appid)), ("data", Part::Text(&payload)), ("secret", Part::Text(&cfg.secret)), ("timestamp", Part::Int(timestamp))]);
     let url = format!("{}{path}", cfg.base);
     let mut req = ureq::post(&url)
@@ -180,7 +234,7 @@ fn md5_hex(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Login, Part, canonical, md5_hex, sign};
+    use super::{Login, Part, access_current, canonical, expiry, md5_hex, sign, unix_now};
 
     #[test]
     fn the_sign_is_the_sorted_md5_fallback() {
@@ -191,5 +245,19 @@ mod tests {
         assert_eq!(canonical(&parts), joined);
         assert_eq!(sign(&parts), md5_hex(joined));
         assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
+    }
+
+    #[test]
+    fn an_absolute_expiry_is_kept_and_a_duration_is_added_to_now() {
+        let absolute = serde_json::json!({"expires": 1_700_000_000});
+        assert_eq!(expiry(&absolute, "expires", 10), 1_700_000_000);
+        let before = unix_now();
+        let got = expiry(&serde_json::json!({"expires": 90}), "expires", 10);
+        let after = unix_now();
+        assert!(got >= before + 90 && got <= after + 90);
+        assert!(!access_current("", 1_700_000_000));
+        assert!(access_current("QC1", 0));
+        assert!(access_current("QC1", after.saturating_add(10_000)));
+        assert!(!access_current("QC1", after.saturating_sub(10)));
     }
 }

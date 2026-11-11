@@ -365,7 +365,7 @@ fn publish_to_server(s: &mut Session, p: &Value) -> Result<Value> {
         // The server's address with its key: the file is kept there first.
         Some(server) if key.is_some() || (server.contains("key=") && !server.contains("token=")) => {
             let server = if crate::live::internal_locked() {
-                crate::live::share_target(true, crate::live::DEFAULT_SERVER, false, &server, &s.auth_token).map_err(|r| bad(cmd, r))?.to_string()
+                crate::live::share_target(true, crate::live::share_server(), false, &server, &s.auth_token).map_err(|r| bad(cmd, r))?.to_string()
             } else {
                 server
             };

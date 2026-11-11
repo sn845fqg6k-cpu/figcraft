@@ -871,7 +871,7 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
 
 /// A private build: sign in, then share on the server named when the app was compiled.
 fn locked_start(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
-    let server = figcraft_engine::live::DEFAULT_SERVER.trim().to_string();
+    let server = figcraft_engine::live::share_server().trim().to_string();
     login_row(app, ui, t);
     if server.is_empty() {
         widgets::label(ui, tr("This build has no share server configured."), t.danger);
@@ -879,92 +879,22 @@ fn locked_start(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
         widgets::label(ui, tr("Sharing uses the configured server."), t.text_secondary);
         online_note(app, ui, t, &server);
     }
-    let enabled = (!app.session.auth_token.is_empty() || !app.session.auth_refresh.is_empty()) && !server.is_empty();
-    if widgets::button(ui, tr("Start sharing"), true, enabled).clicked() && access_still_valid(app) {
+    let enabled = crate::login::ensure(app) && !server.is_empty();
+    if widgets::button(ui, tr("Start sharing"), true, enabled).clicked() && crate::login::ensure(app) {
         start_sharing(app, false, &server);
     }
     join_and_advanced(app, ui, t, |app, ui, t| server_key_row(app, ui, t, &server));
 }
 
-/// Username and password for the ERP. A private build will not share until this succeeds.
+/// Who is signed in. The password is asked when the app starts, not from here.
 fn login_row(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
-    if !app.session.auth_token.is_empty() {
-        widgets::label(ui, &trf("Signed in as {name}", &[("name", &app.session.auth_name)]), t.text);
-        if widgets::button(ui, tr("Log out"), false, true).clicked() {
-            app.run("auth.signOut", json!({}));
-            app.ui.live.login_pass.clear();
-        }
+    if app.session.auth_token.is_empty() {
+        widgets::label(ui, tr("Sign in to use FigCraft."), t.text_secondary);
         return;
     }
-    widgets::label(ui, tr("Log in before sharing."), t.text_secondary);
-    ui.horizontal(|ui| {
-        widgets::label(ui, tr("Username"), t.text);
-        if let Some(name) = widgets::text_field_named(ui, egui::Id::unique("live_login_user"), &app.ui.live.login_user, 160.0, tr("Username")) {
-            app.ui.live.login_user = name.chars().filter(|c| !c.is_control()).take(80).collect();
-        }
-    });
-    ui.horizontal(|ui| {
-        widgets::label(ui, tr("Password"), t.text);
-        if let Some(pass) = widgets::secret_field_named(ui, egui::Id::unique("live_login_pass"), &app.ui.live.login_pass, 160.0, tr("Password")) {
-            app.ui.live.login_pass = pass.chars().filter(|c| !c.is_control()).take(200).collect();
-        }
-    });
-    if widgets::button(ui, tr("Log in"), true, true).clicked() {
-        sign_in(app);
-    }
-    if !app.ui.live.login_error.is_empty() {
-        widgets::label(ui, &app.ui.live.login_error, t.danger);
-    }
-}
-
-/// The access token is still the one to send. If it was cleared and a refresh token remains,
-/// ask the ERP for a new one (`/open/Login/refreshToken`).
-fn access_still_valid(app: &mut FigApp) -> bool {
-    if !app.session.auth_token.is_empty() {
-        return true;
-    }
-    let refresh = app.session.auth_refresh.clone();
-    if refresh.is_empty() {
-        return false;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match crate::erp::refresh(&refresh) {
-            Ok(signed) => {
-                app.ui.live.login_error.clear();
-                app.run("auth.signIn", json!({"token": signed.access, "refresh": signed.refresh, "name": signed.name}));
-                true
-            }
-            Err(e) => {
-                app.ui.live.login_error = e;
-                false
-            }
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = refresh;
-        false
-    }
-}
-
-fn sign_in(app: &mut FigApp) {
-    let user = app.ui.live.login_user.clone();
-    let pass = std::mem::take(&mut app.ui.live.login_pass);
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match crate::erp::login(&user, &pass) {
-            Ok(signed) => {
-                app.ui.live.login_error.clear();
-                app.run("auth.signIn", json!({"token": signed.access, "refresh": signed.refresh, "name": signed.name}));
-            }
-            Err(e) => app.ui.live.login_error = e,
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (user, pass);
-        app.ui.live.login_error = "ERP login needs the desktop app".into();
+    widgets::label(ui, &trf("Signed in as {name}", &[("name", &app.session.auth_name)]), t.text);
+    if widgets::button(ui, tr("Log out"), false, true).clicked() {
+        crate::login::forget(app);
     }
 }
 
@@ -1407,7 +1337,7 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
 pub fn open_publish(app: &mut FigApp) {
     let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
     let server = if figcraft_engine::live::internal_locked() {
-        figcraft_engine::live::DEFAULT_SERVER.to_string()
+        figcraft_engine::live::share_server().to_string()
     } else {
         app.ui.live.last_server.clone()
     };
@@ -1465,8 +1395,8 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
         );
         widgets::label(ui, tr("Server address"), t.text_secondary);
         if figcraft_engine::live::internal_locked() {
-            widgets::label(ui, figcraft_engine::live::DEFAULT_SERVER, t.text);
-            server_key_row(app, ui, &t, figcraft_engine::live::DEFAULT_SERVER);
+            widgets::label(ui, figcraft_engine::live::share_server(), t.text);
+            server_key_row(app, ui, &t, figcraft_engine::live::share_server());
         }
         let resp = ui.add_enabled(
             !figcraft_engine::live::internal_locked(),

@@ -75,7 +75,7 @@ pub use policy::{join_allowed, server_pref_allowed, share_target};
 pub use types::{
     Bind, DEFAULT_SERVER, Event, HostOptions, LiveLink, MAX_NAME, MAX_PEERS, MAX_SELECTION, NO_HOSTING, NO_SESSION, NetReply, NetRequest, ONLINE_OFF,
     PEOPLE, PageInfo, PublishOptions, Published, Role, SessionId, SessionInfo, Share, Shared, SharedLink, Status, TOO_LARGE_TO_JOIN, Via,
-    internal_locked, join_target, parse_color,
+    install_deployment, internal_locked, join_target, parse_color, share_server,
 };
 
 /// The view a follow last applied: any other view means the user moved.

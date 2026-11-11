@@ -60,6 +60,8 @@ impl FigApp {
             updates_rt: updates_ui::Runtime::default(),
             #[cfg(test)]
             ime_observations: 0,
+            auth_restored: false,
+            auth_hold: false,
         }
     }
 
@@ -245,6 +247,14 @@ impl FigApp {
         // Control/window work and this pass's physical tab click may have replaced the owner.
         // A shared field ID in that replacement must never consume the old commit marker.
         let field_save = shortcuts::revalidate_field_save(self, &ctx, field_save);
+        if crate::login::gate(self, ui) {
+            dialogs::keys(self, &ctx);
+            self.toast_ui(&ctx);
+            windows::requests(self, &ctx);
+            shortcuts::clear_field_save_marker(&ctx);
+            self.observe_ime(&ctx, false);
+            return;
+        }
         if self.ui.present.is_some() {
             // A close request can arrive while the presenter fills the window. Let its unsaved
             // changes dialog take Escape and draw above the player just as it does in the editor.

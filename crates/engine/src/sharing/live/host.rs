@@ -39,7 +39,7 @@ pub(super) fn unavailable(cmd: &str) -> EngineError {
 
 pub(super) fn host(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.host";
-    share_target(super::internal_locked(), super::DEFAULT_SERVER, true, "", &s.auth_token).map_err(|r| bad(CMD, r))?;
+    share_target(super::internal_locked(), super::share_server(), true, "", &s.auth_token).map_err(|r| bad(CMD, r))?;
     start_host(s, CMD, p, Bind::Local, false)?;
     Ok(s.live_summary())
 }
@@ -74,7 +74,7 @@ pub(super) fn publish(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The server a private build may use. An ordinary build keeps `server`.
 fn forced_server(cmd: &str, s: &Session, server: &str) -> Result<String> {
-    match share_target(super::internal_locked(), super::DEFAULT_SERVER, false, server, &s.auth_token) {
+    match share_target(super::internal_locked(), super::share_server(), false, server, &s.auth_token) {
         Ok(url) if super::internal_locked() => Ok(url.to_string()),
         Ok(_) => Ok(server.trim().to_string()),
         Err(reason) => Err(bad(cmd, reason)),
@@ -153,7 +153,7 @@ pub(super) fn share(s: &mut Session, p: &Value) -> Result<Value> {
     let id = match via {
         Via::Local if access != Access::Edit => return Err(bad(CMD, LOCAL_EDITS)),
         Via::Local => {
-            share_target(super::internal_locked(), super::DEFAULT_SERVER, true, "", &s.auth_token).map_err(|r| bad(CMD, r))?;
+            share_target(super::internal_locked(), super::share_server(), true, "", &s.auth_token).map_err(|r| bad(CMD, r))?;
             start_host(s, CMD, p, Bind::Lan, true)?
         }
         Via::Online => {

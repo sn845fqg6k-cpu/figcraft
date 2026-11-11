@@ -11,3 +11,5 @@ plans/
 *.profraw
 .cache/
 .vscode/
+# Local Redis URL for packaging/server/compose.yaml. Copy .env.example.
+packaging/server/.env

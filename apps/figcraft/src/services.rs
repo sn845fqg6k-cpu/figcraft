@@ -346,6 +346,10 @@ fn open_directory(file: &std::fs::File) -> Result<(), String> {
 
 /// The preferences' file in the config folder.
 const STATE: &str = "state.json";
+/// The ERP login, sealed. Not the preferences file: that one is copied into a portable folder.
+const AUTH: &str = "auth.bin";
+/// The earlier plaintext file. Read once, rewritten as [`AUTH`], then removed.
+const LEGACY_AUTH: &str = "auth.json";
 
 /// Everything quitting keeps, all done when it returns (macOS then ends the process): the
 /// preferences in `dir`, this run's recovery copies ([`Recovery::quit`](crate::recovery::Recovery::quit))
@@ -566,6 +570,61 @@ impl Services for Desktop {
     }
     fn system_language(&self) -> Option<String> {
         self.language.clone()
+    }
+    fn load_auth(&self) -> Option<String> {
+        let dir = self.dir.as_ref()?;
+        let bin = dir.join(AUTH);
+        if bin.is_file() {
+            let bytes = std::fs::read(&bin).ok()?;
+            return crate::auth_file::open(&bytes).ok().filter(|s| !s.trim().is_empty());
+        }
+        let legacy = dir.join(LEGACY_AUTH);
+        let text = std::fs::read_to_string(&legacy).ok().filter(|s| s.trim_start().starts_with('{'))?;
+        match crate::auth_file::seal(&text) {
+            Ok(bytes) if write_private(&bin, &bytes).is_ok() => {
+                let _ = std::fs::remove_file(&legacy);
+                Some(text)
+            }
+            Ok(_) => {
+                log::warn!("login: couldn't replace the old saved login");
+                Some(text)
+            }
+            Err(e) => {
+                log::warn!("login: {e}");
+                let _ = std::fs::remove_file(&legacy);
+                None
+            }
+        }
+    }
+    fn save_auth(&mut self, body: &str) {
+        let Some(dir) = self.dir.clone() else { return };
+        let path = dir.join(AUTH);
+        let legacy = dir.join(LEGACY_AUTH);
+        if body.trim().is_empty() {
+            for file in [&path, &legacy] {
+                if file.is_file()
+                    && let Err(e) = std::fs::remove_file(file)
+                {
+                    log::warn!("login: couldn't forget the saved login: {e}");
+                }
+            }
+            return;
+        }
+        let bytes = match crate::auth_file::seal(body) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::warn!("login: {e}");
+                return;
+            }
+        };
+        let written = std::fs::create_dir_all(&dir).and_then(|()| write_private(&path, &bytes));
+        if let Err(e) = written {
+            log::warn!("login: couldn't save it in {}: {e}", path.display());
+            return;
+        }
+        if legacy.is_file() {
+            let _ = std::fs::remove_file(legacy);
+        }
     }
 }
 

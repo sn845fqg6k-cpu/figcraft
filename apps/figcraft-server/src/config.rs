@@ -80,6 +80,10 @@ pub struct Config {
     /// Where the browser build is served for this server (`https://figcraft.example.com/app/`): the
     /// team list's browser links point there. Empty: none.
     pub web_url: String,
+    /// The ERP login cache (`redis://:password@host:6379/0`). Empty: publishing does not check a login.
+    pub redis_url: String,
+    /// `from_appid` the ERP wrote with that login. Empty: any app's token is accepted.
+    pub erp_appid: String,
 }
 
 impl Default for Config {
@@ -113,6 +117,8 @@ impl Default for Config {
             messages_per_second: 200,
             team_files: String::new(),
             web_url: String::new(),
+            redis_url: String::new(),
+            erp_appid: String::new(),
         }
     }
 }
@@ -215,6 +221,21 @@ impl Config {
         Err("`web_url` must be a web address without a query (https://figcraft.example.com/app/), at most 500 characters".into())
     }
 
+    /// `redis_url`, when set: a Redis address on one line. The password stays in the file, not the log.
+    pub fn redis(&self) -> Result<(), String> {
+        let url = self.redis_url.trim();
+        if url.is_empty() {
+            return Ok(());
+        }
+        let ok = (url.starts_with("redis://") || url.starts_with("rediss://"))
+            && url.len() <= 500
+            && !url.chars().any(|c| c.is_whitespace() || c.is_control());
+        if ok {
+            return Ok(());
+        }
+        Err("`redis_url` must be one line, like redis://:password@host:6379/0".into())
+    }
+
     /// The trusted proxy's address, when set.
     pub fn proxy(&self) -> Result<Option<IpAddr>, String> {
         let Some(p) = self.trusted_proxy.as_deref().map(str::trim).filter(|p| !p.is_empty()) else { return Ok(None) };
@@ -228,6 +249,7 @@ impl Config {
         self.proxy()?;
         self.team()?;
         self.web()?;
+        self.redis()?;
         if !self.idle_days.is_finite() || !(0.0..=3650.0).contains(&self.idle_days) {
             return Err("`idle_days` must be from 0 to 3650".into());
         }

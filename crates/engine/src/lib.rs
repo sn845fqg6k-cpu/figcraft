@@ -167,6 +167,10 @@ pub struct Session {
     pub auth_name: String,
     /// ERP refresh token, same lifetime as [`Session::auth_token`].
     pub auth_refresh: String,
+    /// Unix time when `auth_token` stops being accepted (0: the app hasn't been told).
+    pub auth_expires: i64,
+    /// Unix time when `auth_refresh` stops being accepted (0: the app hasn't been told).
+    pub auth_refresh_expires: i64,
 }
 
 impl Default for Session {

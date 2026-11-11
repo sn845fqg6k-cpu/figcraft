@@ -280,7 +280,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             if figcraft_engine::live::internal_locked() {
                 ui.horizontal(|ui| {
                     ui.label(tr("Server for online sharing"));
-                    ui.label(figcraft_engine::live::DEFAULT_SERVER);
+                    ui.label(figcraft_engine::live::share_server());
                 });
             } else {
                 ui.horizontal(|ui| {
@@ -292,7 +292,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
                     {
                         app.run("pref.publishServer", json!({"url": url}));
                     }
-                    let usual = prefs.publish_server == figcraft_engine::live::DEFAULT_SERVER;
+                    let usual = prefs.publish_server == figcraft_engine::live::share_server();
                     if crate::widgets::button(ui, tr("Reset"), false, !usual).on_hover_text(tr("Back to the FigCraft server")).clicked() {
                         app.run("pref.publishServer", json!({}));
                     }

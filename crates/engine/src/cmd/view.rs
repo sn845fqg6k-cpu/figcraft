@@ -461,7 +461,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 const CMD: &str = "pref.publishServer";
                 let url = match get(p, "url") {
-                    None => crate::live::DEFAULT_SERVER.to_string(),
+                    None => crate::live::share_server().to_string(),
                     Some(_) => req_string(CMD, p, "url")?.trim().to_string(),
                 };
                 let web_socket = url.starts_with("ws://") || url.starts_with("wss://");
@@ -473,11 +473,11 @@ pub fn specs() -> Vec<CommandSpec> {
                         "the server's address is ws://host:port/ or wss://host/path/, without a key (it is saved with your preferences)",
                     ));
                 }
-                if !crate::live::server_pref_allowed(crate::live::internal_locked(), crate::live::DEFAULT_SERVER, &url) {
+                if !crate::live::server_pref_allowed(crate::live::internal_locked(), crate::live::share_server(), &url) {
                     return Err(bad(CMD, "sharing only uses the configured server"));
                 }
                 s.prefs.publish_server = url;
-                Ok(json!({"url": s.prefs.publish_server, "default": crate::live::DEFAULT_SERVER}))
+                Ok(json!({"url": s.prefs.publish_server, "default": crate::live::share_server()}))
             }
         ),
         spec!(

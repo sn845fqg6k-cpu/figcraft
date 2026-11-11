@@ -1,0 +1,6 @@
+listen = "0.0.0.0:47900"
+data = "/data"
+public_url = "wss://figcraft.example.com/"
+# 正式环境 ERP 的 Redis。留空则不检查登录。
+redis_url = ""
+erp_appid = "1001"

@@ -85,12 +85,15 @@ mod tests {
     #[test]
     fn signing_in_keeps_the_token_out_of_the_command_log() {
         let mut s = crate::Session::new();
-        s.execute("auth.signIn", &serde_json::json!({"token": "QC-token", "name": "Ada", "refresh": "QC-refresh"})).unwrap();
+        s.execute("auth.signIn", &serde_json::json!({"token": "QC-token", "name": "Ada", "refresh": "QC-refresh", "expires": 1_700_000_000, "refreshExpires": 1_800_000_000})).unwrap();
         assert_eq!(s.auth_token, "QC-token");
         assert_eq!(s.auth_name, "Ada");
+        assert_eq!(s.auth_expires, 1_700_000_000);
+        assert_eq!(s.auth_refresh_expires, 1_800_000_000);
         assert!(s.journal.iter().all(|(id, _)| id != "auth.signIn"));
         s.execute("auth.signOut", &serde_json::json!({})).unwrap();
         assert!(s.auth_token.is_empty());
+        assert_eq!(s.auth_expires, 0);
         s.execute("auth.signIn", &serde_json::json!({"token": "has space"})).unwrap_err();
     }
 }

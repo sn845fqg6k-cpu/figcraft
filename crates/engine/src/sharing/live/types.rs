@@ -24,7 +24,29 @@ pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_INTERNAL") {
 /// This binary was compiled for the private deployment (`FIGCRAFT_INTERNAL` set): online sharing
 /// uses [`DEFAULT_SERVER`] only, and hosting on the local network is refused.
 pub fn internal_locked() -> bool {
-    option_env!("FIGCRAFT_INTERNAL").is_some()
+    DEPLOYED.get().is_some() || option_env!("FIGCRAFT_INTERNAL").is_some()
+}
+
+struct Deployed {
+    server: &'static str,
+}
+
+static DEPLOYED: std::sync::OnceLock<Deployed> = std::sync::OnceLock::new();
+
+/// Lock this process to `server` (no key). The desktop app calls this once at startup from the
+/// environment file chosen for the build. Tests leave it unset, so they keep the public server.
+pub fn install_deployment(server: &str) {
+    let server = server.trim();
+    if server.is_empty() {
+        return;
+    }
+    let server: &'static str = Box::leak(server.to_string().into_boxed_str());
+    let _ = DEPLOYED.set(Deployed { server });
+}
+
+/// The server sharing uses: the one [`install_deployment`] named, otherwise [`DEFAULT_SERVER`].
+pub fn share_server() -> &'static str {
+    DEPLOYED.get().map(|d| d.server).unwrap_or(DEFAULT_SERVER)
 }
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).

@@ -1,7 +1,7 @@
 //! The person sharing a file, read from the ERP login cache.
 //!
 //! The desktop app signs in with the ERP and sends that access token on publish and on each new
-//! share link. When `FIGCRAFT_REDIS_URL` is set, this server reads `user_token:{token}` — the
+//! share link. When `redis_url` is set in the server config (or `FIGCRAFT_REDIS_URL`), this server reads `user_token:{token}` — the
 //! value ThinkPHP stores with PHP `serialize` — and records that person's name on the link.
 //! A client-supplied label is not used then. With the variable unset, links stay as they were.
 //!
@@ -9,7 +9,21 @@
 //! cannot name a class to construct.
 
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 use std::time::Duration;
+
+struct Settings {
+    url: String,
+    appid: String,
+}
+
+static SETTINGS: OnceLock<Settings> = OnceLock::new();
+
+/// Remember the Redis address and app id from the server's config. The environment variables
+/// still win when they are set. Tests do not open Redis unless `FIGCRAFT_REDIS_TEST=1`.
+pub fn configure(redis_url: &str, appid: &str) {
+    let _ = SETTINGS.set(Settings { url: redis_url.trim().to_string(), appid: appid.trim().to_string() });
+}
 
 /// Why a share was refused, without the token or the Redis address.
 const SIGN_IN: &str = "log in before sharing";
@@ -45,8 +59,8 @@ fn lookup(token: &str) -> Result<Option<String>, String> {
     let raw: Option<Vec<u8>> = redis::cmd("GET").arg(&key).query(&mut con).map_err(|_| STORE.to_string())?;
     let Some(raw) = raw.filter(|b| !b.is_empty()) else { return Err(EXPIRED.into()) };
     let user = php_array(&raw).map_err(|_| UNREADABLE.to_string())?;
-    if let Some(app) = std::env::var("FIGCRAFT_ERP_APPID").ok().filter(|s| !s.trim().is_empty())
-        && user.get("from_appid").map(String::as_str) != Some(app.trim())
+    if let Some(app) = app_id()
+        && user.get("from_appid").map(String::as_str) != Some(app.as_str())
     {
         return Err(EXPIRED.into());
     }
@@ -60,7 +74,17 @@ fn redis_url() -> Option<String> {
     if std::env::var("FIGCRAFT_REDIS_TEST").ok().as_deref() != Some("1") {
         return None;
     }
-    std::env::var("FIGCRAFT_REDIS_URL").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    if let Some(url) = std::env::var("FIGCRAFT_REDIS_URL").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        return Some(url);
+    }
+    SETTINGS.get().map(|s| s.url.clone()).filter(|s| !s.is_empty())
+}
+
+fn app_id() -> Option<String> {
+    if let Some(app) = std::env::var("FIGCRAFT_ERP_APPID").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        return Some(app);
+    }
+    SETTINGS.get().map(|s| s.appid.clone()).filter(|s| !s.is_empty())
 }
 
 fn display_name(user: &BTreeMap<String, String>) -> String {

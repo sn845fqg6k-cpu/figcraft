@@ -36,6 +36,8 @@ impl Session {
             auth_token: String::new(),
             auth_name: String::new(),
             auth_refresh: String::new(),
+            auth_expires: 0,
+            auth_refresh_expires: 0,
         }
     }
 

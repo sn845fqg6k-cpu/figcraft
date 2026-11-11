@@ -21,7 +21,8 @@ pub mod cjk;
 pub mod control;
 pub mod dialogs;
 #[cfg(not(target_arch = "wasm32"))]
-mod erp;
+pub mod erp;
+mod login;
 pub mod home;
 pub mod i18n;
 pub mod icons;
@@ -800,6 +801,10 @@ pub struct FigApp {
     /// Test-only count of the one IME observation each viewport pass makes.
     #[cfg(test)]
     pub(crate) ime_observations: u32,
+    /// The saved login was read once this run.
+    pub(crate) auth_restored: bool,
+    /// A refresh failed this run: don't ask the ERP again every frame.
+    pub(crate) auth_hold: bool,
 }
 
 /// What to do with the result of a command run in the background.

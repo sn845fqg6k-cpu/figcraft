@@ -1,0 +1,7 @@
+# cargo run 用这份。接口与企业前端 .env.development 相同。
+erp_url = "http://api.baxidangao.com"
+erp_appid = "1001"
+erp_secret = "rtyuiqoweqwe"
+erp_client = "EnterpriseCenterWEB"
+# 本机 Docker 里的 figcraft-server。不要带密钥。
+share_server = "ws://127.0.0.1:47900/"

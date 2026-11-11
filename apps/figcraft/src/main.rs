@@ -23,7 +23,9 @@ compile_error!("Windows GNU builds must set windows_slim_errors to keep UI Autom
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod args;
+mod auth_file;
 mod control_server;
+mod deploy;
 mod gamepad;
 mod graphics;
 mod recovery;
@@ -141,6 +143,7 @@ fn main() -> eframe::Result {
         std::process::exit(i32::from(result.is_err()));
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    deploy::install();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!(
@@ -208,6 +211,7 @@ fn main() -> eframe::Result {
     if let Some(prefs) = svc.prefs.clone() {
         session.prefs = prefs;
     }
+    deploy::pin(&mut session);
     let recovered = recovery_root.as_deref().map(|r| recovery::recover_all(r, &mut session)).unwrap_or_default();
     let mut copies = recovery_root.as_deref().and_then(recovery::Recovery::start);
     // Copies of online files stay until their files arrive from their servers.

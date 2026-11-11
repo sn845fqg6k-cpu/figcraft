@@ -613,7 +613,7 @@ pub(crate) fn set_shared(s: &mut Session, cmd: &str, server: &str, file: &str, o
         return Err(bad(cmd, "the links others got aren't recorded on this computer: revoke them by id (action: links, then revoke)"));
     }
     let revoke: Vec<String> = shared.iter().flat_map(Shared::all).map(|l| l.id.clone()).collect();
-    if on && let Err(reason) = crate::live::share_target(crate::live::internal_locked(), crate::live::DEFAULT_SERVER, false, server, &s.auth_token) {
+    if on && let Err(reason) = crate::live::share_target(crate::live::internal_locked(), crate::live::share_server(), false, server, &s.auth_token) {
         return Err(bad(cmd, reason));
     }
     let req = NetRequest::Share { server: server.to_string(), file: file.to_string(), owner: owner.to_string(), revoke, create: on, auth: s.auth_token.clone() };

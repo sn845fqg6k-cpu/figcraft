@@ -86,6 +86,12 @@ pub trait Services {
     /// Ask for them (the browser asks the person): they join the font list by name, each read when
     /// text uses it.
     fn ask_for_local_fonts(&mut self) {}
+    /// The saved ERP login (`auth.json` in the settings folder), when this app keeps one.
+    fn load_auth(&self) -> Option<String> {
+        None
+    }
+    /// Keep that login, or forget it when `body` is empty. The text holds the tokens.
+    fn save_auth(&mut self, _body: &str) {}
 }
 
 pub type DialogFuture = Pin<Box<dyn Future<Output = Option<PathBuf>>>>;
