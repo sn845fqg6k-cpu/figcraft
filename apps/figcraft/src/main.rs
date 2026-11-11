@@ -142,13 +142,15 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
-    // Windows: the update helper is a copy of this program started with `--finish-update`.
-    #[cfg(windows)]
-    if let Some(result) = craft_update::self_update::finish(&figcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
-        std::process::exit(i32::from(result.is_err()));
-    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     deploy::install();
+    // Windows: the update helper is a copy of this program started with `--finish-update`.
+    // It runs after the deployment config, so it installs a release from the same repository
+    // the check asked.
+    #[cfg(windows)]
+    if let Some(result) = craft_update::self_update::finish(figcraft_ui_egui::update_app(), &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(i32::from(result.is_err()));
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!(

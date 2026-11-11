@@ -11,8 +11,63 @@
 pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
     icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.figcraft.png")),
     accent: Some([0x02, 0xda, 0x96]),
+    // This fork's releases. install_update_repo replaces it from the environment file.
+    repo: "sn845fqg6k-cpu/figcraft",
     ..craft_update::suite::FIGCRAFT
 };
+
+/// The release repository a build asked for. The updater reads [`update_app`], which is this
+/// once `install_update_repo` has accepted one, and [`UPDATE_APP`] until then.
+#[cfg(not(target_arch = "wasm32"))]
+static CONFIGURED_UPDATE: std::sync::OnceLock<craft_update::app::App> = std::sync::OnceLock::new();
+
+/// Use `owner/name` for update checks. A second call keeps the first. The string has to be an
+/// owner and a repository name: the checker only asks GitHub.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn install_update_repo(repo: &str) -> Result<(), &'static str> {
+    let repo = repo.trim();
+    if !repo_ok(repo) {
+        return Err("update_repo must be a GitHub owner/name, such as sn845fqg6k-cpu/figcraft");
+    }
+    let repo: &'static str = Box::leak(repo.to_string().into_boxed_str());
+    let app = craft_update::app::App { repo, ..UPDATE_APP };
+    let _ = CONFIGURED_UPDATE.set(app);
+    Ok(())
+}
+
+/// The app the updater checks and installs. After [`install_update_repo`], that repository;
+/// otherwise [`UPDATE_APP`].
+#[cfg(not(target_arch = "wasm32"))]
+pub fn update_app() -> &'static craft_update::app::App {
+    CONFIGURED_UPDATE.get().unwrap_or(&UPDATE_APP)
+}
+
+/// `owner/name` with no scheme, extra slash or spaces.
+#[cfg(not(target_arch = "wasm32"))]
+fn repo_ok(repo: &str) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else { return false };
+    let part = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 100
+            && !s.starts_with('.')
+            && !s.ends_with('.')
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    };
+    part(owner) && part(name)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod update_repo_tests {
+    use super::repo_ok;
+
+    #[test]
+    fn a_fork_name_is_accepted_and_a_url_is_not() {
+        assert!(repo_ok("sn845fqg6k-cpu/figcraft"));
+        assert!(!repo_ok("https://github.com/sn845fqg6k-cpu/figcraft"));
+        assert!(!repo_ok("storytold/figcraft/releases"));
+        assert!(!repo_ok(""));
+    }
+}
 
 pub mod a11y;
 pub mod bidi;

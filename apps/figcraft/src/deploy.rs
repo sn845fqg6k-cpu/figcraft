@@ -15,11 +15,17 @@ struct Deploy {
 /// the public server in place and says so in the log.
 pub fn install() {
     let raw = include_str!(concat!(env!("OUT_DIR"), "/deploy.toml"));
+    let name = option_env!("FIGCRAFT_ENV_NAME").unwrap_or("dev");
+    if let Some(repo) = value(raw, "update_repo").filter(|s| !s.is_empty()) {
+        match figcraft_ui_egui::install_update_repo(&repo) {
+            Ok(()) => log::info!("deployment {name}: updates come from {repo}"),
+            Err(e) => log::error!("{name}: update config: {e}"),
+        }
+    }
     let Some(cfg) = parse(raw) else {
         log::error!("deployment config is incomplete; sharing stays on the public server");
         return;
     };
-    let name = option_env!("FIGCRAFT_ENV_NAME").unwrap_or("dev");
     if let Err(e) = figcraft_ui_egui::erp::install(&cfg.erp_url, &cfg.erp_appid, &cfg.erp_secret, &cfg.erp_client) {
         log::error!("{name}: ERP config: {e}");
         return;
@@ -76,6 +82,8 @@ mod tests {
             assert!(cfg.erp_url.starts_with("http://") || cfg.erp_url.starts_with("https://"), "{name}");
             assert!(cfg.share_server.starts_with("ws://") || cfg.share_server.starts_with("wss://"), "{name}");
             assert!(!cfg.erp_secret.is_empty(), "{name}");
+            let repo = super::value(&text, "update_repo").unwrap_or_default();
+            assert_eq!(repo, "sn845fqg6k-cpu/figcraft", "{name} must check our releases, not upstream");
         }
     }
 }

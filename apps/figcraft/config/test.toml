@@ -5,3 +5,5 @@ erp_secret = "rtyuiqoweqwe"
 erp_client = "EnterpriseCenterWEB"
 # 测试环境的分享服务器。还在本机 Docker 上时保持这一行。
 share_server = "ws://127.0.0.1:47900/"
+# 检查更新看这个仓库的 GitHub Release，不看上游 storytold/figcraft。
+update_repo = "sn845fqg6k-cpu/figcraft"

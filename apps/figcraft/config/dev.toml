@@ -5,3 +5,5 @@ erp_secret = "rtyuiqoweqwe"
 erp_client = "EnterpriseCenterWEB"
 # 本机 Docker 里的 figcraft-server。不要带密钥。
 share_server = "ws://127.0.0.1:47900/"
+# 检查更新看这个仓库的 GitHub Release，不看上游 storytold/figcraft。
+update_repo = "sn845fqg6k-cpu/figcraft"

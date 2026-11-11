@@ -11,6 +11,10 @@
 
 当前分支是 `main`，跟踪 `origin/main`。下面的命令都在仓库根目录、PowerShell 里执行。
 
+## 软件自己检查更新
+
+桌面版启动时的检查，和菜单里的检查更新，读的是 `apps/figcraft/config` 里当前环境的 `update_repo`。三份配置都是 `sn845fqg6k-cpu/figcraft`，所以它看我们仓库的 GitHub Release，不再看上游 `storytold/figcraft`。我们的仓库上还没有更高版本的 Release 时，检查会说已经是最新。改 `update_repo` 之后要重新编译。
+
 ## 把我们的改进推上去
 
 先看改了什么：

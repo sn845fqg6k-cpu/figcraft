@@ -11,6 +11,10 @@ The local remotes are already set. Leave them as they are:
 
 The current branch is `main`, tracking `origin/main`. Run the commands below from the repository root in PowerShell.
 
+## Update checks
+
+The desktop check at startup, and Check for updates in the menu, read `update_repo` from the environment file under `apps/figcraft/config`. All three name `sn845fqg6k-cpu/figcraft`, so the app asks our GitHub Releases and not upstream `storytold/figcraft`. With no newer Release on our repository, the check reports that this copy is current. A change to `update_repo` needs a rebuild.
+
 ## Push our changes
 
 See what changed:
